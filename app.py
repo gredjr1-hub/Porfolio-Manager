@@ -318,7 +318,9 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollar
             # Mask cost and value if toggled
             avg_str = "$****" if hide_dollars else f"${stock['Avg']:.2f}"
             val_str = "$****" if hide_dollars else f"${stock['Val']:,.0f}"
-            st.markdown(f"**My Return:** :{'green' if ret >=0 else 'red'}[{ret:+.2f}%] | **Avg Cost:** ${stock['Avg']:.2f} | **Value:** ${stock['Val']:,.0f}")
+            
+            # --- FIXED: Now it actually uses the masked variables ---
+            st.markdown(f"**My Return:** :{'green' if ret >=0 else 'red'}[{ret:+.2f}%] | **Avg Cost:** {avg_str} | **Value:** {val_str}")
     master_hist = histories.get(ticker)
     if master_hist is not None and not master_hist.empty:
         if len(master_hist) > 20:
