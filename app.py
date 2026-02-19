@@ -403,6 +403,25 @@ if st.checkbox("Run Market Scan (Takes ~20 seconds to load)"):
         df_market['Upside_Safe'] = pd.to_numeric(df_market['Upside'], errors='coerce').fillna(0)
         df_top10 = df_market.sort_values(by=['Score', 'Upside_Safe'], ascending=[False, False]).head(10)
         
+        # --- NEW: CLEAN CSV EXPORT ---
+        # Select only the relevant columns for a clean spreadsheet
+        export_cols = ['Ticker', 'Price', 'Score', 'Decision', 'Risk', 'Sector', 'T_PE', 'F_PE', 'PEG', 'Upside', 'FCF_Y', 'RSI', 'PC_Ratio']
+        df_export = df_top10[export_cols].copy()
+        
+        # Convert the cleaned dataframe to CSV format in memory
+        csv_data = df_export.to_csv(index=False).encode('utf-8')
+        
+        # Place the download button neatly above the stock cards
+        col_space, col_btn = st.columns([8, 2])
+        with col_btn:
+            st.download_button(
+                label="💾 Export Top 10 to CSV",
+                data=csv_data,
+                file_name=f"Quant_Top10_Scan_{today.strftime('%Y-%m-%d')}.csv",
+                mime="text/csv"
+            )
+        
+        # Draw the stock cards
         for idx, row in df_top10.iterrows():
             draw_stock_row(row.to_dict(), market_hist, today)
 st.divider()
