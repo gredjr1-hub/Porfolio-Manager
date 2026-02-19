@@ -246,7 +246,7 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False):
     ticker = stock['Ticker']
     cols = st.columns([1.6, 1, 1, 1, 1, 1]) 
     is_search_or_watch = stock['Shares'] == 0 
-
+    
     # --- TOOLTIP DICTIONARY ---
     signal_tooltips = {
         "ADD 🟩": "Perfect confluence. Undervalued (low PEG/FCF) AND immediate technicals flashing buy (RSI, MACD, BB). Deploy capital now.",
@@ -265,8 +265,12 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False):
                     st.session_state.watchlist.remove(ticker)
                     st.rerun()
 
+        # Extract the correct tooltip based on the stock's decision
+        hover_text = signal_tooltips.get(stock['Decision'], "Quant Engine Signal")
+
+        # Injected the 'title' attribute for the hover pop-up and 'cursor: help' for the mouse icon
         st.markdown(
-            f"<div style='border:1px solid {stock['D_Color']}; padding: 10px; border-radius: 5px; margin-bottom: 10px;'>"
+            f"<div title='{hover_text}' style='border:1px solid {stock['D_Color']}; padding: 10px; border-radius: 5px; margin-bottom: 10px; cursor: help;'>"
             f"<h4 style='margin:0; color:{stock['D_Color']};'>Signal: {stock['Decision']}</h4>"
             f"<p style='margin:0; font-size:14px;'>Quant Score: <b>{stock['Score']}/100</b> | Risk: <span style='color:{stock['R_Color']};'><b>{stock['Risk']}</b></span></p>"
             f"</div>", unsafe_allow_html=True
@@ -276,16 +280,15 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False):
         with sub1:
             st.write(f"**Price:** ${stock.get('Price', 0.0):.2f}")
             
-            # Safely get and format the P/E and PEG strings (prevents KeyErrors on cached data)
             t_pe = stock.get('T_PE', 'N/A')
             f_pe = stock.get('F_PE', 'N/A')
             peg = stock.get('PEG', 'N/A')
             upside = stock.get('Upside', 'N/A')
             
-            tpe_str = f"{t_pe:.1f}" if isinstance(t_pe, float) else 'N/A'
-            fpe_str = f"{f_pe:.1f}" if isinstance(f_pe, float) else 'N/A'
-            peg_str = f"{peg:.2f}" if isinstance(peg, float) else 'N/A'
-            up_str = f"{upside:+.1f}%" if isinstance(upside, float) else 'N/A'
+            tpe_str = f"{t_pe:.1f}" if isinstance(t_pe, (float, int)) else 'N/A'
+            fpe_str = f"{f_pe:.1f}" if isinstance(f_pe, (float, int)) else 'N/A'
+            peg_str = f"{peg:.2f}" if isinstance(peg, (float, int)) else 'N/A'
+            up_str = f"{upside:+.1f}%" if isinstance(upside, (float, int)) else 'N/A'
             
             st.write(f"**P/E (T|F):** {tpe_str} | {fpe_str}")
             st.write(f"**PEG:** {peg_str}")
@@ -293,7 +296,7 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False):
             
         with sub2:
             st.write(f"**RSI:** {stock['RSI']}")
-            macd_status = "Bullish" if (isinstance(stock['MACD'], float) and stock['MACD'] > stock['MACD_Sig']) else "Bearish"
+            macd_status = "Bullish" if (isinstance(stock['MACD'], (float, int)) and stock['MACD'] > stock['MACD_Sig']) else "Bearish"
             st.write(f"**MACD:** {macd_status}")
             st.write(f"**P/C Ratio:** {stock['PC_Ratio']}")
 
@@ -301,7 +304,6 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False):
             ret = ((stock['Price'] - stock['Avg']) / stock['Avg']) * 100 if stock['Avg'] > 0 else 0
             st.markdown(f"**My Return:** :{'green' if ret >=0 else 'red'}[{ret:+.2f}%] | **Value:** ${stock['Val']:,.0f}")
 
-    # ... (Leave the charting loop the same) ...
     master_hist = histories.get(ticker)
     if master_hist is not None and not master_hist.empty:
         if len(master_hist) > 20:
@@ -316,7 +318,7 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False):
                     end_p = sliced_hist['Close'].iloc[-1]
                     line_color = '#2ca02c' if end_p >= start_p else '#d62728'
                     
-                    # --- NEW: CALCULATE % RETURN FOR THE TIMEFRAME ---
+                    # --- DYNAMIC PERCENTAGE HEADERS ---
                     tf_ret = ((end_p - start_p) / start_p) * 100 if start_p > 0 else 0
                     header_text = f"{tf_label} <span style='color:{line_color}; font-size:13px;'>({tf_ret:+.2f}%)</span>"
                     
@@ -329,12 +331,13 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False):
                     
                     if '200_WMA' in sliced_hist.columns and not sliced_hist['200_WMA'].dropna().empty:
                         fig.add_trace(go.Scatter(x=sliced_hist.index, y=sliced_hist['200_WMA'], mode='lines', name='200 WMA', line=dict(color='darkorange', width=2, dash='dash')))
-                    # --- NEW 50 & 200 SMA LINES ---
+                        
                     if '50_SMA' in sliced_hist.columns and not sliced_hist['50_SMA'].dropna().empty:
                         fig.add_trace(go.Scatter(x=sliced_hist.index, y=sliced_hist['50_SMA'], mode='lines', name='50 SMA', line=dict(color='gold', width=1.5, dash='dot')))
                         
                     if '200_SMA' in sliced_hist.columns and not sliced_hist['200_SMA'].dropna().empty:
                         fig.add_trace(go.Scatter(x=sliced_hist.index, y=sliced_hist['200_SMA'], mode='lines', name='200 SMA', line=dict(color='mediumpurple', width=2, dash='dash')))
+                    
                     if stock['Avg'] > 0:
                         fig.add_hline(y=stock['Avg'], line_dash="dot", line_color="deepskyblue", line_width=2, opacity=0.8)
                     
