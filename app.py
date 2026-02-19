@@ -316,8 +316,8 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollar
         if not is_search_or_watch:
             ret = ((stock['Price'] - stock['Avg']) / stock['Avg']) * 100 if stock['Avg'] > 0 else 0
             # Mask cost and value if toggled
-            avg_str = "$****" if hide_dollars else f"${stock['Avg']:.2f}"
-            val_str = "$****" if hide_dollars else f"${stock['Val']:,.0f}"
+            avg_str = "$••••" if hide_dollars else f"${stock['Avg']:.2f}"
+            val_str = "$••••" if hide_dollars else f"${stock['Val']:,.0f}"
             
             # --- FIXED: Now it actually uses the masked variables ---
             st.markdown(f"**My Return:** :{'green' if ret >=0 else 'red'}[{ret:+.2f}%] | **Avg Cost:** {avg_str} | **Value:** {val_str}")
@@ -450,7 +450,7 @@ if portfolio:
 
     if data:
         # Mask Total Portfolio Value
-        total_val_str = "$****" if hide_dollars else f"${total_val:,.2f}"
+        total_val_str = "$••••" if hide_dollars else f"${total_val:,.2f}"
         
         col_title, col_export = st.columns([8, 2])
         with col_title:
