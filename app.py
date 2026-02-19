@@ -315,12 +315,20 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollar
 
         if not is_search_or_watch:
             ret = ((stock['Price'] - stock['Avg']) / stock['Avg']) * 100 if stock['Avg'] > 0 else 0
-            # Mask cost and value if toggled
+            
             avg_str = "$••••" if hide_dollars else f"${stock['Avg']:.2f}"
             val_str = "$••••" if hide_dollars else f"${stock['Val']:,.0f}"
             
-            # --- FIXED: Now it actually uses the masked variables ---
-            st.markdown(f"**My Return:** :{'green' if ret >=0 else 'red'}[{ret:+.2f}%] | **Avg Cost:** {avg_str} | **Value:** {val_str}")
+            # Define the exact green/red colors to match your charts
+            ret_color = "#2ca02c" if ret >= 0 else "#d62728"
+            
+            # Bypass Markdown entirely and use pure HTML to guarantee perfect formatting
+            st.markdown(
+                f"<b>My Return:</b> <span style='color:{ret_color}; font-weight:bold;'>{ret:+.2f}%</span> | "
+                f"<b>Avg Cost:</b> {avg_str} | "
+                f"<b>Value:</b> {val_str}", 
+                unsafe_allow_html=True
+            )
     master_hist = histories.get(ticker)
     if master_hist is not None and not master_hist.empty:
         if len(master_hist) > 20:
