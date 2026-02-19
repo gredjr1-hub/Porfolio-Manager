@@ -69,6 +69,9 @@ st.sidebar.markdown("Upload your raw **Fidelity positions CSV**, or a standard t
 uploaded_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
 portfolio = {}
 
+# --- NEW: PRIVACY TOGGLE ---
+hide_dollars = st.sidebar.toggle("🙈 Hide Dollar Values", value=False)
+
 if uploaded_file is not None:
     bytes_data = uploaded_file.getvalue()
     try:
@@ -247,7 +250,7 @@ def get_portfolio_data(port_dict):
     return portfolio_data, all_histories, total_value
 
 # --- UI HELPER FUNCTION ---
-def draw_stock_row(stock, histories, today_date, is_watchlist=False):
+def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollars=False):
     ticker = stock['Ticker']
     cols = st.columns([1.6, 1, 1, 1, 1, 1]) 
     is_search_or_watch = stock['Shares'] == 0 
@@ -303,12 +306,19 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False):
             st.write(f"**RSI:** {stock['RSI']}")
             macd_status = "Bullish" if (isinstance(stock['MACD'], (float, int)) and stock['MACD'] > stock['MACD_Sig']) else "Bearish"
             st.write(f"**MACD:** {macd_status}")
+
+# --- NEW: FORMAT INSIDER PERCENTAGE ---
+            ins_val = stock.get('Insiders', 'N/A')
+            ins_str = f"{ins_val * 100:.1f}%" if isinstance(ins_val, (float, int)) else 'N/A'
+
             st.write(f"**P/C Ratio:** {stock['PC_Ratio']}")
 
         if not is_search_or_watch:
             ret = ((stock['Price'] - stock['Avg']) / stock['Avg']) * 100 if stock['Avg'] > 0 else 0
-            st.markdown(f"**My Return:** :{'green' if ret >=0 else 'red'}[{ret:+.2f}%] | **Value:** ${stock['Val']:,.0f}")
-
+            # Mask cost and value if toggled
+            avg_str = "$****" if hide_dollars else f"${stock['Avg']:.2f}"
+            val_str = "$****" if hide_dollars else f"${stock['Val']:,.0f}"
+            st.markdown(f"**My Return:** :{'green' if ret >=0 else 'red'}[{ret:+.2f}%] | **Avg Cost:** ${stock['Avg']:.2f} | **Value:** ${stock['Val']:,.0f}")
     master_hist = histories.get(ticker)
     if master_hist is not None and not master_hist.empty:
         if len(master_hist) > 20:
@@ -373,7 +383,7 @@ if search_query:
                         st.session_state.watchlist.append(search_query)
                         st.rerun()
                 else: st.button("✅ Added", disabled=True)
-            draw_stock_row(search_data[0], search_hist, today)
+            draw_stock_row(search_data[0], search_hist, today, hide_dollars=hide_dollars)
         else:
             st.warning(f"Could not find valid market data for '{search_query}'.")
 st.divider()
@@ -384,7 +394,7 @@ if st.session_state.watchlist:
     watch_dict = {ticker: {} for ticker in st.session_state.watchlist}
     with st.spinner("Updating Watchlist algorithms..."):
         watch_data, watch_hist, _ = get_portfolio_data(watch_dict)
-    for stock in watch_data: draw_stock_row(stock, watch_hist, today, is_watchlist=True)
+    for stock in watch_data: draw_stock_row(stock, watch_hist, today, is_watchlist=True, hide_dollars=hide_dollars)
 
 # --- 3. TOP 10 MARKET SCANNER ---
 st.markdown("### 🏆 Top 10 Market Scanner")
@@ -410,7 +420,7 @@ if st.checkbox("Run Market Scan (Takes ~20 seconds to load)"):
         
         # --- NEW: CLEAN CSV EXPORT ---
         # Select only the relevant columns for a clean spreadsheet
-        export_cols = ['Ticker', 'Price', 'Score', 'Decision', 'Risk', 'Sector', 'T_PE', 'F_PE', 'PEG', 'Upside', 'FCF_Y', 'RSI', 'PC_Ratio']
+        export_cols = ['Ticker', 'Price', 'Score', 'Decision', 'Risk', 'Sector', 'T_PE', 'F_PE', 'PEG', 'Insiders', 'Upside', 'FCF_Y', 'RSI', 'PC_Ratio']
         df_export = df_top10[export_cols].copy()
         
         # Convert the cleaned dataframe to CSV format in memory
@@ -428,7 +438,7 @@ if st.checkbox("Run Market Scan (Takes ~20 seconds to load)"):
         
         # Draw the stock cards
         for idx, row in df_top10.iterrows():
-            draw_stock_row(row.to_dict(), market_hist, today)
+            draw_stock_row(row.to_dict(), market_hist, today, hide_dollars=hide_dollars)
 st.divider()
 
 # --- 4. MACRO PORTFOLIO VIEW ---
@@ -437,7 +447,20 @@ if portfolio:
         data, histories, total_val = get_portfolio_data(portfolio)
 
     if data:
-        st.subheader(f"Total Live Portfolio Value: ${total_val:,.2f}")
+        # Mask Total Portfolio Value
+        total_val_str = "$****" if hide_dollars else f"${total_val:,.2f}"
+        
+        col_title, col_export = st.columns([8, 2])
+        with col_title:
+            st.subheader(f"Total Live Portfolio Value: {total_val_str}")
+            
+        with col_export:
+            # --- NEW: Export your live portfolio grades ---
+            df_port = pd.DataFrame(data)
+            port_cols = ['Ticker', 'Shares', 'Avg', 'Price', 'Score', 'Decision', 'Risk', 'Sector', 'PEG', 'Insiders', 'Upside']
+            csv_port = df_port[port_cols].to_csv(index=False).encode('utf-8')
+            st.download_button("💾 Export Portfolio Grades", data=csv_port, file_name=f"My_Portfolio_Grades_{today.strftime('%Y-%m-%d')}.csv", mime="text/csv")
+            
         st.markdown("### 🩺 Portfolio Health & Diversification")
         
         df_metrics = pd.DataFrame(data)
@@ -507,4 +530,4 @@ if portfolio:
 
         st.divider()
         st.markdown("### 🎯 Algorithmic Asset Analysis")
-        for stock in data: draw_stock_row(stock, histories, today)
+        for stock in data: draw_stock_row(stock, histories, today, hide_dollars=hide_dollars)
