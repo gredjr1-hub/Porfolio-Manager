@@ -265,12 +265,8 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False):
                     st.session_state.watchlist.remove(ticker)
                     st.rerun()
 
-        # Extract the correct tooltip based on the stock's decision
-        hover_text = signal_tooltips.get(stock['Decision'], "Quant Engine Signal")
-
-        # Injected the 'title' attribute for the hover pop-up and 'cursor: help' for the mouse icon
         st.markdown(
-            f"<div title='{hover_text}' style='border:1px solid {stock['D_Color']}; padding: 10px; border-radius: 5px; margin-bottom: 10px; cursor: help;'>"
+            f"<div style='border:1px solid {stock['D_Color']}; padding: 10px; border-radius: 5px; margin-bottom: 10px;'>"
             f"<h4 style='margin:0; color:{stock['D_Color']};'>Signal: {stock['Decision']}</h4>"
             f"<p style='margin:0; font-size:14px;'>Quant Score: <b>{stock['Score']}/100</b> | Risk: <span style='color:{stock['R_Color']};'><b>{stock['Risk']}</b></span></p>"
             f"</div>", unsafe_allow_html=True
@@ -320,6 +316,10 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False):
                     end_p = sliced_hist['Close'].iloc[-1]
                     line_color = '#2ca02c' if end_p >= start_p else '#d62728'
                     
+                    # --- NEW: CALCULATE % RETURN FOR THE TIMEFRAME ---
+                    tf_ret = ((end_p - start_p) / start_p) * 100 if start_p > 0 else 0
+                    header_text = f"{tf_label} <span style='color:{line_color}; font-size:13px;'>({tf_ret:+.2f}%)</span>"
+                    
                     fig = go.Figure()
                     if 'BB_Upper' in sliced_hist.columns and not sliced_hist['BB_Upper'].dropna().empty:
                         fig.add_trace(go.Scatter(x=sliced_hist.index, y=sliced_hist['BB_Upper'], mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'))
@@ -339,7 +339,7 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False):
                         fig.add_hline(y=stock['Avg'], line_dash="dot", line_color="deepskyblue", line_width=2, opacity=0.8)
                     
                     fig.update_layout(
-                        title=dict(text=tf_label, font=dict(size=14)), margin=dict(l=0, r=0, t=30, b=0),
+                        title=dict(text=header_text, font=dict(size=14)), margin=dict(l=0, r=0, t=30, b=0),
                         xaxis=dict(visible=False), yaxis=dict(visible=False), showlegend=False, height=190,
                         plot_bgcolor='rgba(0,0,0,0)', hovermode='x unified'
                     )
