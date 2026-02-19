@@ -116,10 +116,11 @@ def get_portfolio_data(port_dict):
             current_price = stock.fast_info['last_price']
             info = stock.info
 
-            # Grab the P/E and PEG metrics
+            # Grab the P/E, PEG, and Insider metrics
             t_pe = info.get('trailingPE', 'N/A')
             f_pe = info.get('forwardPE', 'N/A')
             peg = info.get('trailingPegRatio', info.get('pegRatio', 'N/A'))
+            insiders = info.get('heldPercentInsiders', 'N/A') # <--- NEW DATA POINT
            
             fcf = info.get('freeCashflow', 'N/A')
             mkt_cap = info.get('marketCap', 'N/A')
@@ -130,8 +131,7 @@ def get_portfolio_data(port_dict):
             fcf_yield = (fcf / mkt_cap * 100) if isinstance(fcf, (int, float)) and isinstance(mkt_cap, (int, float)) and mkt_cap > 0 else 'N/A'
             upside = ((target - current_price) / current_price * 100) if isinstance(target, (int, float)) and target > 0 else 'N/A'
         except:
-            # Fixed the exception handling to properly include t_pe and f_pe
-            current_price, t_pe, f_pe, peg, fcf_yield, target, upside, sector, country = 0.0, 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'Unknown', 'Unknown'
+            current_price, t_pe, f_pe, peg, insiders, fcf_yield, target, upside, sector, country = 0.0, 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'Unknown', 'Unknown'
             
         hist = stock.history(period='max')
         volatility = 0.0
@@ -140,7 +140,6 @@ def get_portfolio_data(port_dict):
         
         if not hist.empty:
             hist['200_WMA'] = hist['Close'].rolling(window=1000).mean()
-            # --- NEW SMA CALCULATIONS ---
             hist['50_SMA'] = hist['Close'].rolling(window=50).mean()
             hist['200_SMA'] = hist['Close'].rolling(window=200).mean()
             if len(hist) >= 252:
@@ -170,32 +169,39 @@ def get_portfolio_data(port_dict):
                 if calls_vol > 0: pc_ratio = round(puts_vol / calls_vol, 2)
         except: pass
 
-        
-        
+        # --- THE ALGORITHM ---
         score = 50 
         risk_points = 0
         
-        # We also check for (float, int) here to make sure whole numbers don't break the algorithm
+        # 1a. PEG Ratio (Growth Valuation)
         if isinstance(peg, (float, int)):
             if peg < 1.0: score += 15
             elif peg > 2.5: score -= 15; risk_points += 1
-            # 1b. Standard P/E Logic (Earnings Expansion)
-        if isinstance(t_pe, (float, int)) and isinstance(f_pe, (float, int)):
-            # If Forward P/E is lower, earnings are expected to grow
-            if f_pe < t_pe: score += 5  
-            # If Forward P/E is 20% higher than Trailing, you're paying a premium for shrinking earnings
-            elif f_pe > (t_pe * 1.2): score -= 5 
             
-            # Risk check for insanely high or negative valuations
+        # 1b. Standard P/E Logic (Earnings Expansion)
+        if isinstance(t_pe, (float, int)) and isinstance(f_pe, (float, int)):
+            if f_pe < t_pe: score += 5  
+            elif f_pe > (t_pe * 1.2): score -= 5 
             if f_pe > 50 or f_pe < 0: risk_points += 1 
         elif t_pe == 'N/A' and f_pe == 'N/A':
-            risk_points += 1 # Add a risk point if the company has zero earnings data
+            risk_points += 1 
+            
+        # 2. FCF Yield (Cash Health)
         if isinstance(fcf_yield, (float, int)):
             if fcf_yield > 5.0: score += 10
             elif fcf_yield < 0: score -= 10; risk_points += 1
+            
+        # 3. Target Upside
         if isinstance(upside, (float, int)):
             if upside > 15: score += 10
             elif upside < 0: score -= 10
+            
+        # 4. Insider Ownership (Skin in the Game) <-- NEW LOGIC
+        if isinstance(insiders, (float, int)):
+            if insiders >= 0.15: score += 10
+            elif insiders >= 0.05: score += 5
+            
+        # 5. Technical Momentum
         if isinstance(rsi_14, (float, int)):
             if rsi_14 < 35: score += 10
             elif rsi_14 > 65: score -= 10
@@ -228,10 +234,9 @@ def get_portfolio_data(port_dict):
         val = current_price * shares
         total_value += val
         
-        # RE-ADDED: 'T_PE', 'F_PE', and 'PEG' are properly bundled here now!
         portfolio_data.append({
             'Ticker': ticker, 'Val': val, 'Price': current_price, 'Shares': shares, 'Avg': avg_price,
-            'Sector': sector, 'Country': country, 'T_PE': t_pe, 'F_PE': f_pe, 'PEG': peg, 
+            'Sector': sector, 'Country': country, 'T_PE': t_pe, 'F_PE': f_pe, 'PEG': peg, 'Insiders': insiders, # <--- PACKAGED HERE
             'Target': target, 'Upside': upside, 'FCF_Y': fcf_yield,
             'RSI': rsi_14, 'MACD': macd_val, 'MACD_Sig': sig_val, 'PC_Ratio': pc_ratio, 'Vol': volatility,
             'Score': score, 'Decision': decision, 'D_Color': d_color, 'Risk': risk_lvl, 'R_Color': r_color, 'Risk_Pts': risk_points,
