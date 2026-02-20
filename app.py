@@ -87,7 +87,7 @@ def log_scores_to_csv(portfolio_data):
         except Exception: pass
             
     with open(filename, 'a', newline='', encoding='utf-8') as f:
-        fieldnames = ['Date', 'Ticker', 'Price', 'Score', 'Decision', 'Risk_Pts', 'ROE', 'Margins', 'PEG', 'FCF_Y', 'Insiders', 'Upside']
+        fieldnames = ['Date', 'Ticker', 'Price', 'Score', 'Decision', 'Risk_Pts', 'ROE', 'Margins', 'PEG', 'FCF_Y', 'Insiders']
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         
         if not file_exists:
@@ -107,8 +107,7 @@ def log_scores_to_csv(portfolio_data):
                     'Margins': stock.get('Margins', 'N/A'),
                     'PEG': stock.get('PEG', 'N/A'),
                     'FCF_Y': stock.get('FCF_Y', 'N/A'),
-                    'Insiders': stock.get('Insiders', 'N/A'),
-                    'Upside': stock.get('Upside', 'N/A')
+                    'Insiders': stock.get('Insiders', 'N/A')
                 })
 
 # --- SESSION STATE FOR WATCHLIST ---
@@ -262,43 +261,44 @@ def get_portfolio_data(port_dict):
                 if calls_vol > 0: pc_ratio = round(puts_vol / calls_vol, 2)
         except: pass
 
-        # --- THE ALGORITHM ---
+        # --- THE ALGORITHM (REBALANCED FOR LONG-TERM SETUPS) ---
         score = 50 
         risk_points = 0
         breakdown = ["**Base Score:** 50 pts"]
         
+        # 1. Quality & Resilience (HEAVILY WEIGHTED)
         if isinstance(roe, (float, int)):
             if roe >= 0.15: 
-                score += 10
-                breakdown.append(f"✅ **ROE > 15%:** +10 pts (Strong Capital Efficiency)")
+                score += 15
+                breakdown.append(f"✅ **ROE > 15%:** +15 pts (Elite Capital Efficiency)")
             elif roe < 0.05: 
-                score -= 10; risk_points += 1
-                breakdown.append(f"❌ **ROE < 5%:** -10 pts (Poor Capital Efficiency) [+1 Risk]")
+                score -= 15; risk_points += 1
+                breakdown.append(f"❌ **ROE < 5%:** -15 pts (Poor Capital Efficiency) [+1 Risk]")
                 
         if isinstance(margins, (float, int)):
             if margins >= 0.40:
-                score += 5
-                breakdown.append(f"✅ **Gross Margins > 40%:** +5 pts (High Pricing Power)")
+                score += 10
+                breakdown.append(f"✅ **Gross Margins > 40%:** +10 pts (Strong Pricing Power)")
             elif margins < 0.10:
-                score -= 5
-                breakdown.append(f"❌ **Gross Margins < 10%:** -5 pts (Low Pricing Power)")
+                score -= 10
+                breakdown.append(f"❌ **Gross Margins < 10%:** -10 pts (Vulnerable to Inflation)")
 
+        # 2. Valuation (HEAVILY WEIGHTED)
         if isinstance(peg, (float, int)):
             if peg < 1.0: 
                 score += 10
-                breakdown.append("✅ **PEG < 1.0:** +10 pts (Undervalued growth)")
+                breakdown.append("✅ **PEG < 1.0:** +10 pts (Undervalued Growth)")
             elif peg > 2.5: 
                 score -= 10; risk_points += 1
                 breakdown.append("❌ **PEG > 2.5:** -10 pts (Overvalued) [+1 Risk]")
                 
-        # --- RESTORED: Fwd vs Trailing P/E ---
         if isinstance(t_pe, (float, int)) and isinstance(f_pe, (float, int)):
             if f_pe < t_pe: 
-                score += 5  
-                breakdown.append("✅ **Forward P/E < Trailing:** +5 pts (Earnings expanding)")
+                score += 10  
+                breakdown.append("✅ **Forward P/E < Trailing:** +10 pts (Earnings Expanding)")
             elif f_pe > (t_pe * 1.2): 
-                score -= 5 
-                breakdown.append("❌ **Forward P/E > Trailing:** -5 pts (Earnings contracting)")
+                score -= 10 
+                breakdown.append("❌ **Forward P/E > Trailing:** -10 pts (Earnings Contracting)")
             if f_pe > 50 or f_pe < 0: 
                 risk_points += 1
                 breakdown.append("⚠️ **Extreme P/E Valuation:** [+1 Risk]")
@@ -309,12 +309,12 @@ def get_portfolio_data(port_dict):
         if isinstance(fcf_yield, (float, int)):
             if fcf_yield > 5.0: 
                 score += 10
-                breakdown.append("✅ **FCF Yield > 5%:** +10 pts (Strong cash generation)")
+                breakdown.append("✅ **FCF Yield > 5%:** +10 pts (Cash Flow Machine)")
             elif fcf_yield < 0: 
                 score -= 10; risk_points += 1
-                breakdown.append("❌ **Negative FCF Yield:** -10 pts (Cash burn) [+1 Risk]")
+                breakdown.append("❌ **Negative FCF Yield:** -10 pts (Cash Burn) [+1 Risk]")
             
-        # --- RESTORED: Analyst Upside Target ---
+        # 3. Conviction (HEAVILY WEIGHTED)
         if isinstance(upside, (float, int)):
             if upside > 15: 
                 score += 10
@@ -326,46 +326,57 @@ def get_portfolio_data(port_dict):
         if isinstance(insiders, (float, int)):
             if insiders >= 0.15: 
                 score += 10
-                breakdown.append("✅ **Insiders > 15%:** +10 pts (Massive conviction)")
+                breakdown.append("✅ **Insiders > 15%:** +10 pts (Massive Skin in Game)")
             elif insiders >= 0.05: 
                 score += 5
-                breakdown.append("✅ **Insiders > 5%:** +5 pts (Strong conviction)")
+                breakdown.append("✅ **Insiders > 5%:** +5 pts (Strong Conviction)")
+                
+        # 4. Long-Term Macro Trend (NEW!)
+        if not hist.empty and '200_SMA' in hist.columns and not pd.isna(hist['200_SMA'].iloc[-1]):
+            sma_200 = hist['200_SMA'].iloc[-1]
+            if current_price > sma_200:
+                score += 10
+                breakdown.append("✅ **Price > 200 SMA:** +10 pts (Long-Term Bull Trend)")
+            else:
+                score -= 10
+                breakdown.append("❌ **Price < 200 SMA:** -10 pts (Long-Term Bear Trend)")
             
+        # 5. Short-Term Technical Momentum (REDUCED WEIGHTS)
         if isinstance(rsi_14, (float, int)):
             if rsi_14 < 35: 
-                score += 10
-                breakdown.append("✅ **RSI < 35:** +10 pts (Oversold/Value Zone)")
+                score += 5
+                breakdown.append("✅ **RSI < 35:** +5 pts (Short-Term Oversold)")
             elif rsi_14 > 65: 
-                score -= 10
-                breakdown.append("❌ **RSI > 65:** -10 pts (Overbought/Exhausted)")
+                score -= 5
+                breakdown.append("❌ **RSI > 65:** -5 pts (Short-Term Overbought)")
                 
         if isinstance(macd_val, (float, int)) and isinstance(sig_val, (float, int)):
             if macd_val > sig_val: 
-                score += 5
-                breakdown.append("✅ **MACD Bullish Cross:** +5 pts")
+                score += 3
+                breakdown.append("✅ **MACD Bullish:** +3 pts")
             else: 
-                score -= 5
-                breakdown.append("❌ **MACD Bearish Cross:** -5 pts")
+                score -= 3
+                breakdown.append("❌ **MACD Bearish:** -3 pts")
                 
         if isinstance(bb_upper, (float, int)) and current_price > 0:
             if current_price < bb_lower: 
-                score += 10
-                breakdown.append("✅ **Price below Lower BB:** +10 pts (Mean reversion bounce)")
+                score += 5
+                breakdown.append("✅ **Price below Lower BB:** +5 pts (Bounce Support)")
             elif current_price > bb_upper: 
-                score -= 10
-                breakdown.append("❌ **Price above Upper BB:** -10 pts (Overextended)")
+                score -= 5
+                breakdown.append("❌ **Price above Upper BB:** -5 pts (Overextended)")
                 
         if vol_surge and (hist['Close'].iloc[-1] > hist['Open'].iloc[-1]): 
-            score += 5 
-            breakdown.append("✅ **Bullish Volume Surge:** +5 pts (Institutional buying)")
+            score += 2 
+            breakdown.append("✅ **Volume Surge:** +2 pts")
             
         if isinstance(pc_ratio, (float, int)):
             if pc_ratio < 0.7: 
-                score += 5
-                breakdown.append("✅ **Put/Call < 0.7:** +5 pts (Bullish options flow)")
+                score += 3
+                breakdown.append("✅ **Put/Call < 0.7:** +3 pts (Bull Options Flow)")
             elif pc_ratio > 1.2: 
-                score -= 5
-                breakdown.append("❌ **Put/Call > 1.2:** -5 pts (Bearish options flow)")
+                score -= 3
+                breakdown.append("❌ **Put/Call > 1.2:** -3 pts (Bear Options Flow)")
             
         if volatility > 60: 
             risk_points += 2
@@ -470,7 +481,6 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollar
         with sub1:
             st.write(f"**Price:** ${stock.get('Price', 0.0):.2f}")
             
-            # --- UPDATED UI: Showing T|F P/E, PEG, and Analyst Upside! ---
             t_pe = stock.get('T_PE', 'N/A')
             f_pe = stock.get('F_PE', 'N/A')
             peg = stock.get('PEG', 'N/A')
@@ -486,14 +496,17 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollar
             st.write(f"**Target Upside:** {up_str}")
             
         with sub2:
-            st.write(f"**RSI:** {stock['RSI']}")
-            macd_status = "Bullish" if (isinstance(stock['MACD'], (float, int)) and stock['MACD'] > stock['MACD_Sig']) else "Bearish"
-            st.write(f"**MACD:** {macd_status}")
+            roe = stock.get('ROE', 'N/A')
+            margins = stock.get('Margins', 'N/A')
+            roe_str = f"{roe * 100:.1f}%" if isinstance(roe, (float, int)) else 'N/A'
+            mar_str = f"{margins * 100:.1f}%" if isinstance(margins, (float, int)) else 'N/A'
+
+            st.write(f"**ROE:** {roe_str}")
+            st.write(f"**Gr Margins:** {mar_str}")
 
             ins_val = stock.get('Insiders', 'N/A')
             ins_str = f"{ins_val * 100:.1f}%" if isinstance(ins_val, (float, int)) else 'N/A'
-
-            st.write(f"**P/C Ratio:** {stock['PC_Ratio']} | **Insiders:** {ins_str}")
+            st.write(f"**Insiders:** {ins_str}")
 
         if not is_search_or_watch:
             ret = ((stock['Price'] - stock['Avg']) / stock['Avg']) * 100 if stock['Avg'] > 0 else 0
@@ -503,7 +516,6 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollar
             
             ret_color = "#2ca02c" if ret >= 0 else "#d62728"
             
-            # --- THE HTML FIX: Forces proper bolding and colors to never bleed ---
             html_string = (
                 f"<div style='font-size: 15px; margin-top: 5px; margin-bottom: 5px;'>"
                 f"<b>My Return:</b> <span style='color:{ret_color}; font-weight:bold;'>{ret:+.2f}%</span> &nbsp;|&nbsp; "
@@ -628,7 +640,7 @@ if st.checkbox("Run Market Scan (Takes ~20 seconds to load)"):
         df_market['Upside_Safe'] = pd.to_numeric(df_market['Upside'], errors='coerce').fillna(0)
         df_top10 = df_market.sort_values(by=['Score', 'Upside_Safe'], ascending=[False, False]).head(10)
         
-        export_cols = ['Ticker', 'Price', 'Score', 'Decision', 'Risk', 'Sector', 'ROE', 'Margins', 'PEG', 'Insiders', 'Upside', 'FCF_Y', 'RSI', 'PC_Ratio']
+        export_cols = ['Ticker', 'Price', 'Score', 'Decision', 'Risk', 'Sector', 'ROE', 'Margins', 'PEG', 'Insiders', 'Upside', 'FCF_Y', 'RSI']
         df_export = df_top10[export_cols].copy()
         
         csv_data = df_export.to_csv(index=False).encode('utf-8')
