@@ -516,6 +516,13 @@ if portfolio:
         
         df_metrics = pd.DataFrame(data)
         
+        # --- FIX: Guarantee the 'Weight' column exists no matter what ---
+        df_metrics['Weight'] = 0.0 
+        
+        if total_val > 0:
+            df_metrics['Weight'] = df_metrics['Val'] / total_val
+            weighted_score = (df_metrics['Score'] * df_metrics['Weight']).sum()
+        
         if total_val > 0:
             df_metrics['Weight'] = df_metrics['Val'] / total_val
             weighted_score = (df_metrics['Score'] * df_metrics['Weight']).sum()
