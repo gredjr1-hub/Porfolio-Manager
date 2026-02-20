@@ -17,6 +17,18 @@ if 'startup_sound_played' not in st.session_state:
 
 st.set_page_config(page_title="Quant Command Center", layout="wide", page_icon="📈")
 
+# --- DATA LOADERS ---
+@st.cache_data(ttl=60)
+def load_score_history():
+    """Loads the historical quant scores from the local CSV log."""
+    if os.path.exists("historical_quant_scores.csv"):
+        try:
+            df = pd.read_csv("historical_quant_scores.csv")
+            df['Date'] = pd.to_datetime(df['Date']).dt.tz_localize(None)
+            return df
+        except Exception: pass
+    return pd.DataFrame()
+
 # --- ALGORITHMIC HELPER FUNCTIONS ---
 def calculate_rsi(series, period=14):
     delta = series.diff()
@@ -57,7 +69,7 @@ def play_startup_sound():
             st.markdown(audio_html, unsafe_allow_html=True)
             st.session_state.startup_sound_played = True
 
-# --- NEW: FORWARD LOGGING DATABASE ---
+# --- FORWARD LOGGING DATABASE ---
 def log_scores_to_csv(portfolio_data):
     """Silently logs today's scores to a local CSV for future backtesting."""
     filename = "historical_quant_scores.csv"
@@ -66,7 +78,6 @@ def log_scores_to_csv(portfolio_data):
     file_exists = os.path.isfile(filename)
     existing_records = set()
     
-    # Prevent duplicate logging for the same ticker on the same day
     if file_exists:
         try:
             with open(filename, 'r', encoding='utf-8') as f:
@@ -204,9 +215,8 @@ def get_portfolio_data(port_dict):
             peg = info.get('trailingPegRatio', info.get('pegRatio', 'N/A'))
             insiders = info.get('heldPercentInsiders', 'N/A')
             
-            # --- NEW: ALL-WEATHER QUALITY METRICS ---
-            roe = info.get('returnOnEquity', 'N/A') # Excellent proxy for ROIC
-            margins = info.get('grossMargins', 'N/A') # Pricing Power
+            roe = info.get('returnOnEquity', 'N/A')
+            margins = info.get('grossMargins', 'N/A')
            
             fcf = info.get('freeCashflow', 'N/A')
             mkt_cap = info.get('marketCap', 'N/A')
@@ -256,7 +266,6 @@ def get_portfolio_data(port_dict):
         risk_points = 0
         breakdown = ["**Base Score:** 50 pts"]
         
-        # 1. Quality & Resilience (NEW: ROE & Margins)
         if isinstance(roe, (float, int)):
             if roe >= 0.15: 
                 score += 10
@@ -273,7 +282,6 @@ def get_portfolio_data(port_dict):
                 score -= 5
                 breakdown.append(f"❌ **Gross Margins < 10%:** -5 pts (Low Pricing Power)")
 
-        # 2. Valuation
         if isinstance(peg, (float, int)):
             if peg < 1.0: 
                 score += 10
@@ -290,7 +298,6 @@ def get_portfolio_data(port_dict):
                 score -= 10; risk_points += 1
                 breakdown.append("❌ **Negative FCF Yield:** -10 pts (Cash burn) [+1 Risk]")
             
-        # 3. Conviction
         if isinstance(upside, (float, int)):
             if upside > 15: 
                 score += 5
@@ -307,7 +314,6 @@ def get_portfolio_data(port_dict):
                 score += 5
                 breakdown.append("✅ **Insiders > 5%:** +5 pts (Strong conviction)")
             
-        # 4. Technical Momentum
         if isinstance(rsi_14, (float, int)):
             if rsi_14 < 35: 
                 score += 10
@@ -379,13 +385,12 @@ def get_portfolio_data(port_dict):
             'Breakdown': breakdown
         })
 
-    # TRIGGER THE SILENT LOGGER HERE
     log_scores_to_csv(portfolio_data)
 
     return portfolio_data, all_histories, total_value
 
 # --- UI HELPER FUNCTION ---
-def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollars=False):
+def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollars=False, score_history=None):
     ticker = stock['Ticker']
     cols = st.columns([1.6, 1, 1, 1, 1, 1]) 
     is_search_or_watch = stock['Shares'] == 0 
@@ -456,11 +461,28 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollar
             avg_str = "$••••" if hide_dollars else f"${stock['Avg']:.2f}"
             val_str = "$••••" if hide_dollars else f"${stock['Val']:,.0f}"
             
-            ret_color = "green" if ret >= 0 else "red"
-            st.markdown(f"**My Return:** :{ret_color}[{ret:+.2f}%] | **Avg Cost:** {avg_str} | **Value:** {val_str}")
+            ret_color = "#2ca02c" if ret >= 0 else "#d62728"
+            
+            # --- THE HTML FIX: Forces proper bolding and colors to never bleed ---
+            html_string = (
+                f"<div style='font-size: 15px; margin-top: 5px; margin-bottom: 5px;'>"
+                f"<b>My Return:</b> <span style='color:{ret_color}; font-weight:bold;'>{ret:+.2f}%</span> &nbsp;|&nbsp; "
+                f"<b>Avg Cost:</b> {avg_str} &nbsp;|&nbsp; "
+                f"<b>Value:</b> {val_str}"
+                f"</div>"
+            )
+            st.markdown(html_string, unsafe_allow_html=True)
             
     master_hist = histories.get(ticker)
     if master_hist is not None and not master_hist.empty:
+        if score_history is not None and not score_history.empty:
+            t_scores = score_history[score_history['Ticker'] == ticker].copy()
+            if not t_scores.empty:
+                t_scores.set_index('Date', inplace=True)
+                t_scores = t_scores[~t_scores.index.duplicated(keep='last')]
+                master_hist = master_hist.join(t_scores['Score'], how='left')
+                master_hist['Score'] = master_hist['Score'].ffill()
+                
         if len(master_hist) > 20:
             master_hist['BB_Upper'], master_hist['BB_Lower'] = calculate_bbands(master_hist['Close'])
 
@@ -477,6 +499,13 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollar
                     header_text = f"{tf_label} <span style='color:{line_color}; font-size:13px;'>({tf_ret:+.2f}%)</span>"
                     
                     fig = go.Figure()
+                    
+                    if 'Score' in sliced_hist.columns and not sliced_hist['Score'].dropna().empty:
+                        fig.add_trace(go.Scatter(
+                            x=sliced_hist.index, y=sliced_hist['Score'], mode='lines', 
+                            name='Quant Score', line=dict(color='fuchsia', width=2, dash='dot'), yaxis='y2'
+                        ))
+
                     if 'BB_Upper' in sliced_hist.columns and not sliced_hist['BB_Upper'].dropna().empty:
                         fig.add_trace(go.Scatter(x=sliced_hist.index, y=sliced_hist['BB_Upper'], mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'))
                         fig.add_trace(go.Scatter(x=sliced_hist.index, y=sliced_hist['BB_Lower'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(173, 216, 230, 0.2)', showlegend=False, hoverinfo='skip'))
@@ -497,7 +526,10 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollar
                     
                     fig.update_layout(
                         title=dict(text=header_text, font=dict(size=14)), margin=dict(l=0, r=0, t=30, b=0),
-                        xaxis=dict(visible=False), yaxis=dict(visible=False), showlegend=False, height=190,
+                        xaxis=dict(visible=False), 
+                        yaxis=dict(visible=False), 
+                        yaxis2=dict(range=[0, 100], overlaying='y', side='right', visible=False), 
+                        showlegend=False, height=190,
                         plot_bgcolor='rgba(0,0,0,0)', hovermode='x unified'
                     )
                     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
@@ -506,6 +538,8 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollar
 # --- APP LAYOUT ---
 st.title("📈 Nightshift Quant Command Center")
 today = pd.Timestamp.today().tz_localize(None)
+
+global_scores_df = load_score_history()
 
 st.markdown("### 🔍 Stock Research Station")
 search_query = st.text_input("Enter Ticker Symbol (e.g. MSFT, BMNR, QS):", "").strip().upper()
@@ -521,7 +555,7 @@ if search_query:
                         st.session_state.watchlist.append(search_query)
                         st.rerun()
                 else: st.button("✅ Added", disabled=True)
-            draw_stock_row(search_data[0], search_hist, today, hide_dollars=hide_dollars)
+            draw_stock_row(search_data[0], search_hist, today, hide_dollars=hide_dollars, score_history=global_scores_df)
         else:
             st.warning(f"Could not find valid market data for '{search_query}'.")
 st.divider()
@@ -531,7 +565,7 @@ if st.session_state.watchlist:
     watch_dict = {ticker: {} for ticker in st.session_state.watchlist}
     with st.spinner("Updating Watchlist algorithms..."):
         watch_data, watch_hist, _ = get_portfolio_data(watch_dict)
-    for stock in watch_data: draw_stock_row(stock, watch_hist, today, is_watchlist=True, hide_dollars=hide_dollars)
+    for stock in watch_data: draw_stock_row(stock, watch_hist, today, is_watchlist=True, hide_dollars=hide_dollars, score_history=global_scores_df)
 
 st.markdown("### 🏆 Top 10 Market Scanner")
 st.markdown("Live scan of a curated universe of 50 global megacap and hyper-growth stocks to find the best immediate setups.")
@@ -569,7 +603,7 @@ if st.checkbox("Run Market Scan (Takes ~20 seconds to load)"):
             )
         
         for idx, row in df_top10.iterrows():
-            draw_stock_row(row.to_dict(), market_hist, today, hide_dollars=hide_dollars)
+            draw_stock_row(row.to_dict(), market_hist, today, hide_dollars=hide_dollars, score_history=global_scores_df)
 st.divider()
 
 if portfolio:
@@ -659,4 +693,4 @@ if portfolio:
 
         st.divider()
         st.markdown("### 🎯 Algorithmic Asset Analysis")
-        for stock in data: draw_stock_row(stock, histories, today, hide_dollars=hide_dollars)
+        for stock in data: draw_stock_row(stock, histories, today, hide_dollars=hide_dollars, score_history=global_scores_df)
