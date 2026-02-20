@@ -87,7 +87,7 @@ def log_scores_to_csv(portfolio_data):
         except Exception: pass
             
     with open(filename, 'a', newline='', encoding='utf-8') as f:
-        fieldnames = ['Date', 'Ticker', 'Price', 'Score', 'Decision', 'Risk_Pts', 'ROE', 'Margins', 'PEG', 'FCF_Y', 'Insiders']
+        fieldnames = ['Date', 'Ticker', 'Price', 'Score', 'Decision', 'Risk_Pts', 'ROE', 'Margins', 'PEG', 'FCF_Y', 'Insiders', 'Upside']
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         
         if not file_exists:
@@ -107,7 +107,8 @@ def log_scores_to_csv(portfolio_data):
                     'Margins': stock.get('Margins', 'N/A'),
                     'PEG': stock.get('PEG', 'N/A'),
                     'FCF_Y': stock.get('FCF_Y', 'N/A'),
-                    'Insiders': stock.get('Insiders', 'N/A')
+                    'Insiders': stock.get('Insiders', 'N/A'),
+                    'Upside': stock.get('Upside', 'N/A')
                 })
 
 # --- SESSION STATE FOR WATCHLIST ---
@@ -289,6 +290,21 @@ def get_portfolio_data(port_dict):
             elif peg > 2.5: 
                 score -= 10; risk_points += 1
                 breakdown.append("❌ **PEG > 2.5:** -10 pts (Overvalued) [+1 Risk]")
+                
+        # --- RESTORED: Fwd vs Trailing P/E ---
+        if isinstance(t_pe, (float, int)) and isinstance(f_pe, (float, int)):
+            if f_pe < t_pe: 
+                score += 5  
+                breakdown.append("✅ **Forward P/E < Trailing:** +5 pts (Earnings expanding)")
+            elif f_pe > (t_pe * 1.2): 
+                score -= 5 
+                breakdown.append("❌ **Forward P/E > Trailing:** -5 pts (Earnings contracting)")
+            if f_pe > 50 or f_pe < 0: 
+                risk_points += 1
+                breakdown.append("⚠️ **Extreme P/E Valuation:** [+1 Risk]")
+        elif t_pe == 'N/A' and f_pe == 'N/A':
+            risk_points += 1 
+            breakdown.append("⚠️ **Missing Earnings Data:** [+1 Risk]")
             
         if isinstance(fcf_yield, (float, int)):
             if fcf_yield > 5.0: 
@@ -298,13 +314,14 @@ def get_portfolio_data(port_dict):
                 score -= 10; risk_points += 1
                 breakdown.append("❌ **Negative FCF Yield:** -10 pts (Cash burn) [+1 Risk]")
             
+        # --- RESTORED: Analyst Upside Target ---
         if isinstance(upside, (float, int)):
             if upside > 15: 
-                score += 5
-                breakdown.append(f"✅ **Analyst Upside > 15%:** +5 pts")
+                score += 10
+                breakdown.append(f"✅ **Analyst Upside > 15%:** +10 pts")
             elif upside < 0: 
-                score -= 5
-                breakdown.append(f"❌ **Analyst Upside Negative:** -5 pts")
+                score -= 10
+                breakdown.append(f"❌ **Analyst Upside Negative:** -10 pts")
             
         if isinstance(insiders, (float, int)):
             if insiders >= 0.15: 
@@ -415,17 +432,15 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollar
                     st.session_state.watchlist.remove(ticker)
                     st.rerun()
 
-        # --- NEW: 90-DAY TREND INDICATOR ---
+        # --- TREND INDICATOR ARROWS ---
         trend_html = ""
         if score_history is not None and not score_history.empty:
             t_scores = score_history[score_history['Ticker'] == ticker].copy()
             if not t_scores.empty:
-                # Filter for only the last 90 days
                 ninety_days_ago = today_date - timedelta(days=90)
                 t_scores_quarter = t_scores[t_scores['Date'] >= ninety_days_ago].sort_values('Date')
                 
                 if not t_scores_quarter.empty:
-                    # Compare today's score to the oldest score in the 90-day window
                     oldest_score = int(t_scores_quarter.iloc[0]['Score'])
                     current_score = int(stock['Score'])
                     diff = current_score - oldest_score
@@ -439,7 +454,6 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollar
 
         hover_text = signal_tooltips.get(stock['Decision'], "Quant Engine Signal")
 
-        # Injected the {trend_html} directly next to the score
         st.markdown(
             f"<div title='{hover_text}' style='border:1px solid {stock['D_Color']}; padding: 10px; border-radius: 5px; margin-bottom: 5px; cursor: help;'>"
             f"<h4 style='margin:0; color:{stock['D_Color']};'>Signal: {stock['Decision']}</h4>"
@@ -456,17 +470,20 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollar
         with sub1:
             st.write(f"**Price:** ${stock.get('Price', 0.0):.2f}")
             
-            roe = stock.get('ROE', 'N/A')
-            margins = stock.get('Margins', 'N/A')
+            # --- UPDATED UI: Showing T|F P/E, PEG, and Analyst Upside! ---
+            t_pe = stock.get('T_PE', 'N/A')
+            f_pe = stock.get('F_PE', 'N/A')
             peg = stock.get('PEG', 'N/A')
+            upside = stock.get('Upside', 'N/A')
             
-            roe_str = f"{roe * 100:.1f}%" if isinstance(roe, (float, int)) else 'N/A'
-            mar_str = f"{margins * 100:.1f}%" if isinstance(margins, (float, int)) else 'N/A'
+            tpe_str = f"{t_pe:.1f}" if isinstance(t_pe, (float, int)) else 'N/A'
+            fpe_str = f"{f_pe:.1f}" if isinstance(f_pe, (float, int)) else 'N/A'
             peg_str = f"{peg:.2f}" if isinstance(peg, (float, int)) else 'N/A'
+            up_str = f"{upside:+.1f}%" if isinstance(upside, (float, int)) else 'N/A'
             
-            st.write(f"**ROE:** {roe_str}")
-            st.write(f"**Gr Margins:** {mar_str}")
+            st.write(f"**P/E (T|F):** {tpe_str} | {fpe_str}")
             st.write(f"**PEG:** {peg_str}")
+            st.write(f"**Target Upside:** {up_str}")
             
         with sub2:
             st.write(f"**RSI:** {stock['RSI']}")
