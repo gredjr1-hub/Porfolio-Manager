@@ -269,27 +269,27 @@ def get_portfolio_data(port_dict):
         
         if isinstance(roe, (float, int)):
             if roe >= 0.2: 
-                score += 10
-                breakdown.append(f"✅ **ROE > 20%:** +10 pts (Strong Capital Efficiency)")
+                score += 5
+                breakdown.append(f"✅ **ROE > 20%:** +5 pts (Strong Capital Efficiency)")
             elif roe < 0.05: 
-                score -= 10; risk_points += 1
-                breakdown.append(f"❌ **ROE < 5%:** -10 pts (Poor Capital Efficiency) [+1 Risk]")
+                score -= 7; risk_points += 1
+                breakdown.append(f"❌ **ROE < 5%:** -7 pts (Poor Capital Efficiency) [+1 Risk]")
                 
         if isinstance(margins, (float, int)):
             if margins >= 0.5:
-                score += 5
-                breakdown.append(f"✅ **Gross Margins > 50%:** +5 pts (High Pricing Power)")
+                score += 4
+                breakdown.append(f"✅ **Gross Margins > 50%:** +4 pts (High Pricing Power)")
             elif margins < 0.10:
-                score -= 5
-                breakdown.append(f"❌ **Gross Margins < 10%:** -5 pts (Low Pricing Power)")
+                score -= 4
+                breakdown.append(f"❌ **Gross Margins < 10%:** -4 pts (Low Pricing Power)")
 
         if isinstance(peg, (float, int)):
             if peg < .9: 
-                score += 10
-                breakdown.append("✅ **PEG < .9:** +10 pts (Undervalued growth)")
+                score += 5
+                breakdown.append("✅ **PEG < .9:** +5 pts (Undervalued growth)")
             elif peg > 2.5: 
-                score -= 10; risk_points += 1
-                breakdown.append("❌ **PEG > 2.5:** -10 pts (Overvalued) [+1 Risk]")
+                score -= 7; risk_points += 1
+                breakdown.append("❌ **PEG > 2.5:** -7 pts (Overvalued) [+1 Risk]")
                 
         # --- RESTORED: Fwd vs Trailing P/E ---
         if isinstance(t_pe, (float, int)) and isinstance(f_pe, (float, int)):
@@ -308,11 +308,11 @@ def get_portfolio_data(port_dict):
             
         if isinstance(fcf_yield, (float, int)):
             if fcf_yield > 6.0: 
-                score += 10
-                breakdown.append("✅ **FCF Yield > 6%:** +10 pts (Strong cash generation)")
+                score += 5
+                breakdown.append("✅ **FCF Yield > 6%:** +5 pts (Strong cash generation)")
             elif fcf_yield < 0: 
-                score -= 10; risk_points += 1
-                breakdown.append("❌ **Negative FCF Yield:** -10 pts (Cash burn) [+1 Risk]")
+                score -= 5; risk_points += 1
+                breakdown.append("❌ **Negative FCF Yield:** -5 pts (Cash burn) [+1 Risk]")
             
         # --- RESTORED: Analyst Upside Target ---
         if isinstance(upside, (float, int)):
@@ -349,11 +349,11 @@ def get_portfolio_data(port_dict):
                 
         if isinstance(bb_upper, (float, int)) and current_price > 0:
             if current_price < bb_lower: 
-                score += 10
-                breakdown.append("✅ **Price below Lower BB:** +10 pts (Mean reversion bounce)")
+                score += 8
+                breakdown.append("✅ **Price below Lower BB:** +8 pts (Mean reversion bounce)")
             elif current_price > bb_upper: 
-                score -= 10
-                breakdown.append("❌ **Price above Upper BB:** -10 pts (Overextended)")
+                score -= 8
+                breakdown.append("❌ **Price above Upper BB:** -8 pts (Overextended)")
                 
         if vol_surge and (hist['Close'].iloc[-1] > hist['Open'].iloc[-1]): 
             score += 5 
