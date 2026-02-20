@@ -8,6 +8,8 @@ import re
 from datetime import timedelta
 import base64
 import os
+import csv
+from datetime import datetime
 
 # --- SESSION STATE FOR AUDIO ---
 if 'startup_sound_played' not in st.session_state:
@@ -55,6 +57,48 @@ def play_startup_sound():
             st.markdown(audio_html, unsafe_allow_html=True)
             st.session_state.startup_sound_played = True
 
+# --- NEW: FORWARD LOGGING DATABASE ---
+def log_scores_to_csv(portfolio_data):
+    """Silently logs today's scores to a local CSV for future backtesting."""
+    filename = "historical_quant_scores.csv"
+    today_str = datetime.today().strftime('%Y-%m-%d')
+    
+    file_exists = os.path.isfile(filename)
+    existing_records = set()
+    
+    # Prevent duplicate logging for the same ticker on the same day
+    if file_exists:
+        try:
+            with open(filename, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    existing_records.add((row['Date'], row['Ticker']))
+        except Exception: pass
+            
+    with open(filename, 'a', newline='', encoding='utf-8') as f:
+        fieldnames = ['Date', 'Ticker', 'Price', 'Score', 'Decision', 'Risk_Pts', 'ROE', 'Margins', 'PEG', 'FCF_Y', 'Insiders']
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        
+        if not file_exists:
+            writer.writeheader()
+            
+        for stock in portfolio_data:
+            record_key = (today_str, stock['Ticker'])
+            if record_key not in existing_records:
+                writer.writerow({
+                    'Date': today_str,
+                    'Ticker': stock['Ticker'],
+                    'Price': round(stock['Price'], 2),
+                    'Score': stock['Score'],
+                    'Decision': stock['Decision'],
+                    'Risk_Pts': stock['Risk_Pts'],
+                    'ROE': stock.get('ROE', 'N/A'),
+                    'Margins': stock.get('Margins', 'N/A'),
+                    'PEG': stock.get('PEG', 'N/A'),
+                    'FCF_Y': stock.get('FCF_Y', 'N/A'),
+                    'Insiders': stock.get('Insiders', 'N/A')
+                })
+
 # --- SESSION STATE FOR WATCHLIST ---
 if 'watchlist' not in st.session_state:
     st.session_state.watchlist = []
@@ -71,7 +115,6 @@ hide_dollars = st.sidebar.toggle("🙈 Hide Dollar Values", value=False)
 if uploaded_file is not None:
     bytes_data = uploaded_file.getvalue()
     try:
-        # --- BYPASS FIDELITY FOOTER BUG ---
         raw_text = bytes_data.decode('utf-8', errors='ignore')
         if '"The data and information' in raw_text:
             raw_text = raw_text.split('"The data and information')[0]
@@ -93,7 +136,6 @@ if uploaded_file is not None:
                 cost_clean = re.sub(r'[^\d.-]', '', cost_raw)
                 avg_cost = float(cost_clean) if cost_clean else 0.0
                 
-                # --- LOT AGGREGATION LOGIC ---
                 if ticker in portfolio:
                     prev_shares = portfolio[ticker]['shares']
                     prev_avg = portfolio[ticker]['avg_price']
@@ -119,7 +161,6 @@ if uploaded_file is not None:
                 cost_clean = re.sub(r'[^\d.-]', '', cost_raw)
                 avg_cost = float(cost_clean) if cost_clean else 0.0
                 
-                # --- LOT AGGREGATION LOGIC ---
                 if ticker in portfolio:
                     prev_shares = portfolio[ticker]['shares']
                     prev_avg = portfolio[ticker]['avg_price']
@@ -148,7 +189,6 @@ def get_portfolio_data(port_dict):
         shares, avg_price = data.get('shares', 0), data.get('avg_price', 0)
         stock = yf.Ticker(ticker)
         
-        # --- 1. GET PRICE SAFELY FIRST ---
         hist = stock.history(period='max')
         if not hist.empty:
             current_price = hist['Close'].iloc[-1]
@@ -157,13 +197,16 @@ def get_portfolio_data(port_dict):
         else:
             current_price = 0.0
             
-        # --- 2. GET FUNDAMENTALS SEPARATELY ---
         try:
             info = stock.info
             t_pe = info.get('trailingPE', 'N/A')
             f_pe = info.get('forwardPE', 'N/A')
             peg = info.get('trailingPegRatio', info.get('pegRatio', 'N/A'))
             insiders = info.get('heldPercentInsiders', 'N/A')
+            
+            # --- NEW: ALL-WEATHER QUALITY METRICS ---
+            roe = info.get('returnOnEquity', 'N/A') # Excellent proxy for ROIC
+            margins = info.get('grossMargins', 'N/A') # Pricing Power
            
             fcf = info.get('freeCashflow', 'N/A')
             mkt_cap = info.get('marketCap', 'N/A')
@@ -174,7 +217,7 @@ def get_portfolio_data(port_dict):
             fcf_yield = (fcf / mkt_cap * 100) if isinstance(fcf, (int, float)) and isinstance(mkt_cap, (int, float)) and mkt_cap > 0 else 'N/A'
             upside = ((target - current_price) / current_price * 100) if isinstance(target, (int, float)) and target > 0 and current_price > 0 else 'N/A'
         except:
-            t_pe, f_pe, peg, insiders, fcf_yield, target, upside, sector, country = 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'Unknown', 'Unknown'
+            t_pe, f_pe, peg, insiders, roe, margins, fcf_yield, target, upside, sector, country = 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'Unknown', 'Unknown'
             
         volatility = 0.0
         rsi_14, macd_val, sig_val, bb_upper, bb_lower = 'N/A', 'N/A', 'N/A', 'N/A', 'N/A'
@@ -213,27 +256,31 @@ def get_portfolio_data(port_dict):
         risk_points = 0
         breakdown = ["**Base Score:** 50 pts"]
         
+        # 1. Quality & Resilience (NEW: ROE & Margins)
+        if isinstance(roe, (float, int)):
+            if roe >= 0.15: 
+                score += 10
+                breakdown.append(f"✅ **ROE > 15%:** +10 pts (Strong Capital Efficiency)")
+            elif roe < 0.05: 
+                score -= 10; risk_points += 1
+                breakdown.append(f"❌ **ROE < 5%:** -10 pts (Poor Capital Efficiency) [+1 Risk]")
+                
+        if isinstance(margins, (float, int)):
+            if margins >= 0.40:
+                score += 5
+                breakdown.append(f"✅ **Gross Margins > 40%:** +5 pts (High Pricing Power)")
+            elif margins < 0.10:
+                score -= 5
+                breakdown.append(f"❌ **Gross Margins < 10%:** -5 pts (Low Pricing Power)")
+
+        # 2. Valuation
         if isinstance(peg, (float, int)):
             if peg < 1.0: 
-                score += 15
-                breakdown.append("✅ **PEG < 1.0:** +15 pts (Undervalued growth)")
+                score += 10
+                breakdown.append("✅ **PEG < 1.0:** +10 pts (Undervalued growth)")
             elif peg > 2.5: 
-                score -= 15; risk_points += 1
-                breakdown.append("❌ **PEG > 2.5:** -15 pts (Overvalued) [+1 Risk]")
-            
-        if isinstance(t_pe, (float, int)) and isinstance(f_pe, (float, int)):
-            if f_pe < t_pe: 
-                score += 5  
-                breakdown.append("✅ **Forward P/E < Trailing:** +5 pts (Earnings expanding)")
-            elif f_pe > (t_pe * 1.2): 
-                score -= 5 
-                breakdown.append("❌ **Forward P/E > Trailing:** -5 pts (Earnings contracting)")
-            if f_pe > 50 or f_pe < 0: 
-                risk_points += 1
-                breakdown.append("⚠️ **Extreme P/E Valuation:** [+1 Risk]")
-        elif t_pe == 'N/A' and f_pe == 'N/A':
-            risk_points += 1 
-            breakdown.append("⚠️ **Missing Earnings Data:** [+1 Risk]")
+                score -= 10; risk_points += 1
+                breakdown.append("❌ **PEG > 2.5:** -10 pts (Overvalued) [+1 Risk]")
             
         if isinstance(fcf_yield, (float, int)):
             if fcf_yield > 5.0: 
@@ -243,13 +290,14 @@ def get_portfolio_data(port_dict):
                 score -= 10; risk_points += 1
                 breakdown.append("❌ **Negative FCF Yield:** -10 pts (Cash burn) [+1 Risk]")
             
+        # 3. Conviction
         if isinstance(upside, (float, int)):
             if upside > 15: 
-                score += 10
-                breakdown.append(f"✅ **Analyst Upside > 15%:** +10 pts")
+                score += 5
+                breakdown.append(f"✅ **Analyst Upside > 15%:** +5 pts")
             elif upside < 0: 
-                score -= 10
-                breakdown.append(f"❌ **Analyst Upside Negative:** -10 pts")
+                score -= 5
+                breakdown.append(f"❌ **Analyst Upside Negative:** -5 pts")
             
         if isinstance(insiders, (float, int)):
             if insiders >= 0.15: 
@@ -259,6 +307,7 @@ def get_portfolio_data(port_dict):
                 score += 5
                 breakdown.append("✅ **Insiders > 5%:** +5 pts (Strong conviction)")
             
+        # 4. Technical Momentum
         if isinstance(rsi_14, (float, int)):
             if rsi_14 < 35: 
                 score += 10
@@ -320,7 +369,8 @@ def get_portfolio_data(port_dict):
         
         portfolio_data.append({
             'Ticker': ticker, 'Val': val, 'Price': current_price, 'Shares': shares, 'Avg': avg_price,
-            'Sector': sector, 'Country': country, 'T_PE': t_pe, 'F_PE': f_pe, 'PEG': peg, 'Insiders': insiders, 
+            'Sector': sector, 'Country': country, 'T_PE': t_pe, 'F_PE': f_pe, 'PEG': peg, 
+            'ROE': roe, 'Margins': margins, 'Insiders': insiders, 
             'Target': target, 'Upside': upside, 'FCF_Y': fcf_yield,
             'RSI': rsi_14, 'MACD': macd_val, 'MACD_Sig': sig_val, 'PC_Ratio': pc_ratio, 'Vol': volatility,
             'Score': score, 'Decision': decision, 'D_Color': d_color, 'Risk': risk_lvl, 'R_Color': r_color, 'Risk_Pts': risk_points,
@@ -328,6 +378,9 @@ def get_portfolio_data(port_dict):
             'pct_acct': data.get('pct_acct', 0.0), 'gl_pct': data.get('gl_pct', 0.0),
             'Breakdown': breakdown
         })
+
+    # TRIGGER THE SILENT LOGGER HERE
+    log_scores_to_csv(portfolio_data)
 
     return portfolio_data, all_histories, total_value
 
@@ -349,7 +402,6 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollar
         title_col, btn_col = st.columns([3, 1])
         with title_col: 
             st.markdown(f"### **{ticker}**")
-            # --- NEW: Finviz Quick Link (Forces opening in a new tab) ---
             st.markdown(f"<a href='https://finviz.com/quote.ashx?t={ticker}' target='_blank' style='text-decoration: none; font-size: 14px;'>🔗 Finviz</a>", unsafe_allow_html=True)
             
         with btn_col:
@@ -367,7 +419,6 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollar
             f"</div>", unsafe_allow_html=True
         )
         
-        # --- NEW: SCORE BREAKDOWN POPOVER ---
         with st.popover("📊 Score Breakdown", use_container_width=True):
             st.markdown(f"### {ticker} Algorithmic Breakdown")
             for line in stock.get('Breakdown', []):
@@ -377,19 +428,17 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollar
         with sub1:
             st.write(f"**Price:** ${stock.get('Price', 0.0):.2f}")
             
-            t_pe = stock.get('T_PE', 'N/A')
-            f_pe = stock.get('F_PE', 'N/A')
+            roe = stock.get('ROE', 'N/A')
+            margins = stock.get('Margins', 'N/A')
             peg = stock.get('PEG', 'N/A')
-            upside = stock.get('Upside', 'N/A')
             
-            tpe_str = f"{t_pe:.1f}" if isinstance(t_pe, (float, int)) else 'N/A'
-            fpe_str = f"{f_pe:.1f}" if isinstance(f_pe, (float, int)) else 'N/A'
+            roe_str = f"{roe * 100:.1f}%" if isinstance(roe, (float, int)) else 'N/A'
+            mar_str = f"{margins * 100:.1f}%" if isinstance(margins, (float, int)) else 'N/A'
             peg_str = f"{peg:.2f}" if isinstance(peg, (float, int)) else 'N/A'
-            up_str = f"{upside:+.1f}%" if isinstance(upside, (float, int)) else 'N/A'
             
-            st.write(f"**P/E (T|F):** {tpe_str} | {fpe_str}")
+            st.write(f"**ROE:** {roe_str}")
+            st.write(f"**Gr Margins:** {mar_str}")
             st.write(f"**PEG:** {peg_str}")
-            st.write(f"**Target Upside:** {up_str}")
             
         with sub2:
             st.write(f"**RSI:** {stock['RSI']}")
@@ -404,11 +453,9 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollar
         if not is_search_or_watch:
             ret = ((stock['Price'] - stock['Avg']) / stock['Avg']) * 100 if stock['Avg'] > 0 else 0
             
-            # Use dot characters so Markdown doesn't get confused by asterisks
             avg_str = "$••••" if hide_dollars else f"${stock['Avg']:.2f}"
             val_str = "$••••" if hide_dollars else f"${stock['Val']:,.0f}"
             
-            # Use native Streamlit colors
             ret_color = "green" if ret >= 0 else "red"
             st.markdown(f"**My Return:** :{ret_color}[{ret:+.2f}%] | **Avg Cost:** {avg_str} | **Value:** {val_str}")
             
@@ -460,12 +507,11 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollar
 st.title("📈 Nightshift Quant Command Center")
 today = pd.Timestamp.today().tz_localize(None)
 
-# --- 1. RESEARCH STATION ---
 st.markdown("### 🔍 Stock Research Station")
 search_query = st.text_input("Enter Ticker Symbol (e.g. MSFT, BMNR, QS):", "").strip().upper()
 
 if search_query:
-    with st.spinner(f"Running 8-metric algorithmic analysis on {search_query}..."):
+    with st.spinner(f"Running algorithmic analysis on {search_query}..."):
         search_data, search_hist, _ = get_portfolio_data({search_query: {'shares': 0, 'avg_price': 0, 'pct_acct': 0, 'gl_pct': 0}})
         if search_data and search_data[0]['Price'] > 0:
             col1, col2 = st.columns([8, 1])
@@ -480,7 +526,6 @@ if search_query:
             st.warning(f"Could not find valid market data for '{search_query}'.")
 st.divider()
 
-# --- 2. WATCHLIST VIEW ---
 if st.session_state.watchlist:
     st.markdown("### ⭐ My Watchlist")
     watch_dict = {ticker: {} for ticker in st.session_state.watchlist}
@@ -488,7 +533,6 @@ if st.session_state.watchlist:
         watch_data, watch_hist, _ = get_portfolio_data(watch_dict)
     for stock in watch_data: draw_stock_row(stock, watch_hist, today, is_watchlist=True, hide_dollars=hide_dollars)
 
-# --- 3. TOP 10 MARKET SCANNER ---
 st.markdown("### 🏆 Top 10 Market Scanner")
 st.markdown("Live scan of a curated universe of 50 global megacap and hyper-growth stocks to find the best immediate setups.")
 
@@ -510,8 +554,7 @@ if st.checkbox("Run Market Scan (Takes ~20 seconds to load)"):
         df_market['Upside_Safe'] = pd.to_numeric(df_market['Upside'], errors='coerce').fillna(0)
         df_top10 = df_market.sort_values(by=['Score', 'Upside_Safe'], ascending=[False, False]).head(10)
         
-        # Select only the relevant columns for a clean spreadsheet
-        export_cols = ['Ticker', 'Price', 'Score', 'Decision', 'Risk', 'Sector', 'T_PE', 'F_PE', 'PEG', 'Insiders', 'Upside', 'FCF_Y', 'RSI', 'PC_Ratio']
+        export_cols = ['Ticker', 'Price', 'Score', 'Decision', 'Risk', 'Sector', 'ROE', 'Margins', 'PEG', 'Insiders', 'Upside', 'FCF_Y', 'RSI', 'PC_Ratio']
         df_export = df_top10[export_cols].copy()
         
         csv_data = df_export.to_csv(index=False).encode('utf-8')
@@ -529,13 +572,11 @@ if st.checkbox("Run Market Scan (Takes ~20 seconds to load)"):
             draw_stock_row(row.to_dict(), market_hist, today, hide_dollars=hide_dollars)
 st.divider()
 
-# --- 4. MACRO PORTFOLIO VIEW ---
 if portfolio:
     with st.spinner("Crunching data from the market..."):
         data, histories, total_val = get_portfolio_data(portfolio)
 
     if data:
-        # Mask Total Portfolio Value
         total_val_str = "$••••" if hide_dollars else f"${total_val:,.2f}"
         
         col_title, col_export = st.columns([8, 2])
@@ -544,7 +585,7 @@ if portfolio:
             
         with col_export:
             df_port = pd.DataFrame(data)
-            port_cols = ['Ticker', 'Shares', 'Avg', 'Price', 'Score', 'Decision', 'Risk', 'Sector', 'PEG', 'Insiders', 'Upside']
+            port_cols = ['Ticker', 'Shares', 'Avg', 'Price', 'Score', 'Decision', 'Risk', 'Sector', 'ROE', 'PEG', 'Insiders', 'Upside']
             csv_port = df_port[port_cols].to_csv(index=False).encode('utf-8')
             st.download_button("💾 Export Portfolio Grades", data=csv_port, file_name=f"My_Portfolio_Grades_{today.strftime('%Y-%m-%d')}.csv", mime="text/csv")
             
@@ -552,7 +593,6 @@ if portfolio:
         
         df_metrics = pd.DataFrame(data)
         
-        # --- THE FIX: Force the Weight column to exist no matter what! ---
         df_metrics['Weight'] = 0.0 
         
         if total_val > 0:
