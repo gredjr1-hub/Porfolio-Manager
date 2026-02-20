@@ -268,25 +268,25 @@ def get_portfolio_data(port_dict):
         breakdown = ["**Base Score:** 50 pts"]
         
         if isinstance(roe, (float, int)):
-            if roe >= 0.15: 
+            if roe >= 0.2: 
                 score += 10
-                breakdown.append(f"✅ **ROE > 15%:** +10 pts (Strong Capital Efficiency)")
+                breakdown.append(f"✅ **ROE > 20%:** +10 pts (Strong Capital Efficiency)")
             elif roe < 0.05: 
                 score -= 10; risk_points += 1
                 breakdown.append(f"❌ **ROE < 5%:** -10 pts (Poor Capital Efficiency) [+1 Risk]")
                 
         if isinstance(margins, (float, int)):
-            if margins >= 0.40:
+            if margins >= 0.5:
                 score += 5
-                breakdown.append(f"✅ **Gross Margins > 40%:** +5 pts (High Pricing Power)")
+                breakdown.append(f"✅ **Gross Margins > 50%:** +5 pts (High Pricing Power)")
             elif margins < 0.10:
                 score -= 5
                 breakdown.append(f"❌ **Gross Margins < 10%:** -5 pts (Low Pricing Power)")
 
         if isinstance(peg, (float, int)):
-            if peg < 1.0: 
+            if peg < .9: 
                 score += 10
-                breakdown.append("✅ **PEG < 1.0:** +10 pts (Undervalued growth)")
+                breakdown.append("✅ **PEG < .9:** +10 pts (Undervalued growth)")
             elif peg > 2.5: 
                 score -= 10; risk_points += 1
                 breakdown.append("❌ **PEG > 2.5:** -10 pts (Overvalued) [+1 Risk]")
@@ -307,18 +307,18 @@ def get_portfolio_data(port_dict):
             breakdown.append("⚠️ **Missing Earnings Data:** [+1 Risk]")
             
         if isinstance(fcf_yield, (float, int)):
-            if fcf_yield > 5.0: 
+            if fcf_yield > 6.0: 
                 score += 10
-                breakdown.append("✅ **FCF Yield > 5%:** +10 pts (Strong cash generation)")
+                breakdown.append("✅ **FCF Yield > 6%:** +10 pts (Strong cash generation)")
             elif fcf_yield < 0: 
                 score -= 10; risk_points += 1
                 breakdown.append("❌ **Negative FCF Yield:** -10 pts (Cash burn) [+1 Risk]")
             
         # --- RESTORED: Analyst Upside Target ---
         if isinstance(upside, (float, int)):
-            if upside > 15: 
+            if upside > 25: 
                 score += 10
-                breakdown.append(f"✅ **Analyst Upside > 15%:** +10 pts")
+                breakdown.append(f"✅ **Analyst Upside > 25%:** +10 pts")
             elif upside < 0: 
                 score -= 10
                 breakdown.append(f"❌ **Analyst Upside Negative:** -10 pts")
@@ -332,9 +332,9 @@ def get_portfolio_data(port_dict):
                 breakdown.append("✅ **Insiders > 5%:** +5 pts (Strong conviction)")
             
         if isinstance(rsi_14, (float, int)):
-            if rsi_14 < 35: 
+            if rsi_14 < 30: 
                 score += 10
-                breakdown.append("✅ **RSI < 35:** +10 pts (Oversold/Value Zone)")
+                breakdown.append("✅ **RSI < 30:** +10 pts (Oversold/Value Zone)")
             elif rsi_14 > 65: 
                 score -= 10
                 breakdown.append("❌ **RSI > 65:** -10 pts (Overbought/Exhausted)")
@@ -360,12 +360,12 @@ def get_portfolio_data(port_dict):
             breakdown.append("✅ **Bullish Volume Surge:** +5 pts (Institutional buying)")
             
         if isinstance(pc_ratio, (float, int)):
-            if pc_ratio < 0.7: 
+            if pc_ratio < 0.6: 
                 score += 5
-                breakdown.append("✅ **Put/Call < 0.7:** +5 pts (Bullish options flow)")
-            elif pc_ratio > 1.2: 
+                breakdown.append("✅ **Put/Call < 0.6:** +5 pts (Bullish options flow)")
+            elif pc_ratio > 1.3: 
                 score -= 5
-                breakdown.append("❌ **Put/Call > 1.2:** -5 pts (Bearish options flow)")
+                breakdown.append("❌ **Put/Call > 1.3:** -5 pts (Bearish options flow)")
             
         if volatility > 60: 
             risk_points += 2
