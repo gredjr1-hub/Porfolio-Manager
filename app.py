@@ -377,10 +377,10 @@ def get_portfolio_data(port_dict):
         score = max(0, min(100, int(score))) 
         breakdown.append(f"---\n🎯 **Final Quant Score: {score}/100**")
         
-        if score >= 90: decision, d_color = "ADD 🟩", "#28a745"
-        elif score >= 70: decision, d_color = "HOLD/ACCUMULATE 🟨", "#17a2b8"
-        elif score >= 50: decision, d_color = "HOLD ⬜", "#6c757d"
-        elif score >= 40: decision, d_color = "TRIM 🟧", "#fd7e14"
+        if score >= 85: decision, d_color = "ADD 🟩", "#28a745"
+        elif score >= 65: decision, d_color = "HOLD/ACCUMULATE 🟨", "#17a2b8"
+        elif score >= 40: decision, d_color = "HOLD ⬜", "#6c757d"
+        elif score >= 30: decision, d_color = "TRIM 🟧", "#fd7e14"
         else: decision, d_color = "SELL 🟥", "#dc3545"
             
         if risk_points >= 3: risk_lvl, r_color = "HIGH ⚠️", "red"
