@@ -295,10 +295,10 @@ def get_portfolio_data(port_dict):
         if isinstance(t_pe, (float, int)) and isinstance(f_pe, (float, int)):
             if f_pe < t_pe: 
                 score += 10  
-                breakdown.append("✅ **Forward P/E < Trailing:** +10 pts (Earnings Expanding)")
+                breakdown.append("✅ **Forward P/E < Trailing:** +8 pts (Earnings Expanding)")
             elif f_pe > (t_pe * 1.2): 
                 score -= 10 
-                breakdown.append("❌ **Forward P/E > Trailing:** -10 pts (Earnings Contracting)")
+                breakdown.append("❌ **Forward P/E > Trailing:** -8 pts (Earnings Contracting)")
             if f_pe > 50 or f_pe < 0: 
                 risk_points += 1
                 breakdown.append("⚠️ **Extreme P/E Valuation:** [+1 Risk]")
@@ -318,10 +318,10 @@ def get_portfolio_data(port_dict):
         if isinstance(upside, (float, int)):
             if upside > 15: 
                 score += 10
-                breakdown.append(f"✅ **Analyst Upside > 15%:** +10 pts")
+                breakdown.append(f"✅ **Analyst Upside > 15%:** +8 pts")
             elif upside < 0: 
                 score -= 10
-                breakdown.append(f"❌ **Analyst Upside Negative:** -10 pts")
+                breakdown.append(f"❌ **Analyst Upside Negative:** -8 pts")
             
         if isinstance(insiders, (float, int)):
             if insiders >= 0.15: 
@@ -336,10 +336,10 @@ def get_portfolio_data(port_dict):
             sma_200 = hist['200_SMA'].iloc[-1]
             if current_price > sma_200:
                 score += 10
-                breakdown.append("✅ **Price > 200 SMA:** +10 pts (Long-Term Bull Trend)")
+                breakdown.append("✅ **Price > 200 SMA:** +5 pts (Long-Term Bull Trend)")
             else:
                 score -= 10
-                breakdown.append("❌ **Price < 200 SMA:** -10 pts (Long-Term Bear Trend)")
+                breakdown.append("❌ **Price < 200 SMA:** -5 pts (Long-Term Bear Trend)")
             
         # 5. Short-Term Technical Momentum (REDUCED WEIGHTS)
         if isinstance(rsi_14, (float, int)):
@@ -348,15 +348,15 @@ def get_portfolio_data(port_dict):
                 breakdown.append("✅ **RSI < 35:** +5 pts (Short-Term Oversold)")
             elif rsi_14 > 65: 
                 score -= 5
-                breakdown.append("❌ **RSI > 65:** -5 pts (Short-Term Overbought)")
+                breakdown.append("❌ **RSI > 65:** -7 pts (Short-Term Overbought)")
                 
         if isinstance(macd_val, (float, int)) and isinstance(sig_val, (float, int)):
             if macd_val > sig_val: 
                 score += 3
-                breakdown.append("✅ **MACD Bullish:** +3 pts")
+                breakdown.append("✅ **MACD Bullish:** +4 pts")
             else: 
                 score -= 3
-                breakdown.append("❌ **MACD Bearish:** -3 pts")
+                breakdown.append("❌ **MACD Bearish:** -4 pts")
                 
         if isinstance(bb_upper, (float, int)) and current_price > 0:
             if current_price < bb_lower: 
@@ -368,15 +368,15 @@ def get_portfolio_data(port_dict):
                 
         if vol_surge and (hist['Close'].iloc[-1] > hist['Open'].iloc[-1]): 
             score += 2 
-            breakdown.append("✅ **Volume Surge:** +2 pts")
+            breakdown.append("✅ **Volume Surge:** +4 pts")
             
         if isinstance(pc_ratio, (float, int)):
             if pc_ratio < 0.7: 
                 score += 3
-                breakdown.append("✅ **Put/Call < 0.7:** +3 pts (Bull Options Flow)")
+                breakdown.append("✅ **Put/Call < 0.7:** +4 pts (Bull Options Flow)")
             elif pc_ratio > 1.2: 
                 score -= 3
-                breakdown.append("❌ **Put/Call > 1.2:** -3 pts (Bear Options Flow)")
+                breakdown.append("❌ **Put/Call > 1.2:** -4 pts (Bear Options Flow)")
             
         if volatility > 60: 
             risk_points += 2
