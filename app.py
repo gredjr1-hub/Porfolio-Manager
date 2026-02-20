@@ -115,15 +115,22 @@ def get_portfolio_data(port_dict):
         shares, avg_price = data.get('shares', 0), data.get('avg_price', 0)
         stock = yf.Ticker(ticker)
         
+        # --- 1. GET PRICE SAFELY FIRST ---
+        # We grab the price from the market history, which is much less likely to be rate-limited by Yahoo
+        hist = stock.history(period='max')
+        if not hist.empty:
+            current_price = hist['Close'].iloc[-1]
+        else:
+            current_price = 0.0
+            
+        # --- 2. GET FUNDAMENTALS SEPARATELY ---
+        # Now, if Yahoo blocks the info scraping, it won't crash your price to $0.00
         try:
-            current_price = stock.fast_info['last_price']
             info = stock.info
-
-            # Grab the P/E, PEG, and Insider metrics
             t_pe = info.get('trailingPE', 'N/A')
             f_pe = info.get('forwardPE', 'N/A')
             peg = info.get('trailingPegRatio', info.get('pegRatio', 'N/A'))
-            insiders = info.get('heldPercentInsiders', 'N/A') # <--- NEW DATA POINT
+            insiders = info.get('heldPercentInsiders', 'N/A')
            
             fcf = info.get('freeCashflow', 'N/A')
             mkt_cap = info.get('marketCap', 'N/A')
@@ -132,11 +139,10 @@ def get_portfolio_data(port_dict):
             country = info.get('country', 'Unknown')
             
             fcf_yield = (fcf / mkt_cap * 100) if isinstance(fcf, (int, float)) and isinstance(mkt_cap, (int, float)) and mkt_cap > 0 else 'N/A'
-            upside = ((target - current_price) / current_price * 100) if isinstance(target, (int, float)) and target > 0 else 'N/A'
+            upside = ((target - current_price) / current_price * 100) if isinstance(target, (int, float)) and target > 0 and current_price > 0 else 'N/A'
         except:
-            current_price, t_pe, f_pe, peg, insiders, fcf_yield, target, upside, sector, country = 0.0, 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'Unknown', 'Unknown'
+            t_pe, f_pe, peg, insiders, fcf_yield, target, upside, sector, country = 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'N/A', 'Unknown', 'Unknown'
             
-        hist = stock.history(period='max')
         volatility = 0.0
         rsi_14, macd_val, sig_val, bb_upper, bb_lower = 'N/A', 'N/A', 'N/A', 'N/A', 'N/A'
         vol_surge = False
