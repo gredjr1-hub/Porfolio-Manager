@@ -81,23 +81,57 @@ if uploaded_file is not None:
         df_upload = pd.DataFrame()
 
     if 'Account Number' in df_upload.columns and 'Symbol' in df_upload.columns:
-        df_upload = df_upload.dropna(subset=['Symbol', 'Quantity', 'Average Cost Basis'])
+        # Removed 'Average Cost Basis' from dropna so we don't skip transferred stocks
+        df_upload = df_upload.dropna(subset=['Symbol', 'Quantity']) 
         for index, row in df_upload.iterrows():
             ticker = str(row['Symbol']).replace('**', '').strip().upper()
             if not ticker or ticker == 'NAN' or 'SPAXX' in ticker: continue
             try:
                 qty = float(str(row['Quantity']).replace(',', ''))
-                avg_cost = float(re.sub(r'[^\d.-]', '', str(row['Average Cost Basis'])))
-                pct_acct = float(str(row['Percent Of Account']).replace('%', '').strip()) if 'Percent Of Account' in row and pd.notna(row['Percent Of Account']) else 0.0
-                gl_pct = float(str(row['Total Gain/Loss Percent']).replace('%', '').replace('+', '').strip()) if 'Total Gain/Loss Percent' in row and pd.notna(row['Total Gain/Loss Percent']) else 0.0
-                portfolio[ticker] = {'shares': qty, 'avg_price': avg_cost, 'pct_acct': pct_acct, 'gl_pct': gl_pct}
+                
+                # Safely handle blank or missing cost basis
+                cost_raw = str(row.get('Average Cost Basis', '0'))
+                cost_clean = re.sub(r'[^\d.-]', '', cost_raw)
+                avg_cost = float(cost_clean) if cost_clean else 0.0
+                
+                # --- LOT AGGREGATION LOGIC (Weighted Average) ---
+                if ticker in portfolio:
+                    prev_shares = portfolio[ticker]['shares']
+                    prev_avg = portfolio[ticker]['avg_price']
+                    new_shares = prev_shares + qty
+                    new_avg = ((prev_shares * prev_avg) + (qty * avg_cost)) / new_shares if new_shares > 0 else 0
+                    portfolio[ticker]['shares'] = new_shares
+                    portfolio[ticker]['avg_price'] = new_avg
+                else:
+                    portfolio[ticker] = {'shares': qty, 'avg_price': avg_cost, 'pct_acct': 0.0, 'gl_pct': 0.0}
             except: continue
         st.sidebar.success("✅ Fidelity Portfolio loaded successfully!")
         play_startup_sound()
+        
     elif 'Ticker' in df_upload.columns and 'Shares' in df_upload.columns:
         for index, row in df_upload.iterrows():
             ticker = str(row['Ticker']).strip().upper()
-            portfolio[ticker] = {'shares': float(row['Shares']), 'avg_price': float(row['Avg_Price']), 'pct_acct': 0.0, 'gl_pct': 0.0}
+            if not ticker or ticker == 'NAN': continue
+            try:
+                # Strip commas and dollar signs from Standard CSVs
+                qty_raw = str(row['Shares']).replace(',', '')
+                qty = float(qty_raw) if qty_raw else 0.0
+                
+                cost_raw = str(row.get('Avg_Price', '0'))
+                cost_clean = re.sub(r'[^\d.-]', '', cost_raw)
+                avg_cost = float(cost_clean) if cost_clean else 0.0
+                
+                # --- LOT AGGREGATION LOGIC (Weighted Average) ---
+                if ticker in portfolio:
+                    prev_shares = portfolio[ticker]['shares']
+                    prev_avg = portfolio[ticker]['avg_price']
+                    new_shares = prev_shares + qty
+                    new_avg = ((prev_shares * prev_avg) + (qty * avg_cost)) / new_shares if new_shares > 0 else 0
+                    portfolio[ticker]['shares'] = new_shares
+                    portfolio[ticker]['avg_price'] = new_avg
+                else:
+                    portfolio[ticker] = {'shares': qty, 'avg_price': avg_cost, 'pct_acct': 0.0, 'gl_pct': 0.0}
+            except: continue
         st.sidebar.success("✅ Standard Portfolio loaded successfully!")
         play_startup_sound()
 # --- QUANT DATA FETCHING ENGINE ---
