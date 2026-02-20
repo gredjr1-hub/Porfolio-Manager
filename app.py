@@ -415,12 +415,35 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollar
                     st.session_state.watchlist.remove(ticker)
                     st.rerun()
 
+        # --- NEW: 90-DAY TREND INDICATOR ---
+        trend_html = ""
+        if score_history is not None and not score_history.empty:
+            t_scores = score_history[score_history['Ticker'] == ticker].copy()
+            if not t_scores.empty:
+                # Filter for only the last 90 days
+                ninety_days_ago = today_date - timedelta(days=90)
+                t_scores_quarter = t_scores[t_scores['Date'] >= ninety_days_ago].sort_values('Date')
+                
+                if not t_scores_quarter.empty:
+                    # Compare today's score to the oldest score in the 90-day window
+                    oldest_score = int(t_scores_quarter.iloc[0]['Score'])
+                    current_score = int(stock['Score'])
+                    diff = current_score - oldest_score
+                    
+                    if diff > 0:
+                        trend_html = f" <span style='color:#2ca02c; font-size:13px;' title='Up {diff} pts over the last 90 days'><b>⬆️ (+{diff})</b></span>"
+                    elif diff < 0:
+                        trend_html = f" <span style='color:#d62728; font-size:13px;' title='Down {abs(diff)} pts over the last 90 days'><b>⬇️ ({diff})</b></span>"
+                    elif len(t_scores_quarter) > 1:
+                        trend_html = f" <span style='color:gray; font-size:13px;' title='Score unchanged over the last 90 days'><b>➖</b></span>"
+
         hover_text = signal_tooltips.get(stock['Decision'], "Quant Engine Signal")
 
+        # Injected the {trend_html} directly next to the score
         st.markdown(
             f"<div title='{hover_text}' style='border:1px solid {stock['D_Color']}; padding: 10px; border-radius: 5px; margin-bottom: 5px; cursor: help;'>"
             f"<h4 style='margin:0; color:{stock['D_Color']};'>Signal: {stock['Decision']}</h4>"
-            f"<p style='margin:0; font-size:14px;'>Quant Score: <b>{stock['Score']}/100</b> | Risk: <span style='color:{stock['R_Color']};'><b>{stock['Risk']}</b></span></p>"
+            f"<p style='margin:0; font-size:14px;'>Quant Score: <b>{stock['Score']}/100</b>{trend_html} | Risk: <span style='color:{stock['R_Color']};'><b>{stock['Risk']}</b></span></p>"
             f"</div>", unsafe_allow_html=True
         )
         
