@@ -270,27 +270,27 @@ def get_portfolio_data(port_dict):
         if isinstance(roe, (float, int)):
             if roe >= 0.15: 
                 score += 15
-                breakdown.append(f"✅ **ROE > 15%:** +15 pts (Elite Capital Efficiency)")
+                breakdown.append(f"✅ **ROE > 15%:** +10 pts (Elite Capital Efficiency)")
             elif roe < 0.05: 
                 score -= 15; risk_points += 1
-                breakdown.append(f"❌ **ROE < 5%:** -15 pts (Poor Capital Efficiency) [+1 Risk]")
+                breakdown.append(f"❌ **ROE < 5%:** -10 pts (Poor Capital Efficiency) [+1 Risk]")
                 
         if isinstance(margins, (float, int)):
             if margins >= 0.40:
                 score += 10
-                breakdown.append(f"✅ **Gross Margins > 40%:** +10 pts (Strong Pricing Power)")
+                breakdown.append(f"✅ **Gross Margins > 40%:** +8 pts (Strong Pricing Power)")
             elif margins < 0.10:
                 score -= 10
-                breakdown.append(f"❌ **Gross Margins < 10%:** -10 pts (Vulnerable to Inflation)")
+                breakdown.append(f"❌ **Gross Margins < 10%:** -8 pts (Vulnerable to Inflation)")
 
         # 2. Valuation (HEAVILY WEIGHTED)
         if isinstance(peg, (float, int)):
             if peg < 1.0: 
                 score += 10
-                breakdown.append("✅ **PEG < 1.0:** +10 pts (Undervalued Growth)")
+                breakdown.append("✅ **PEG < 1.0:** +8 pts (Undervalued Growth)")
             elif peg > 2.5: 
                 score -= 10; risk_points += 1
-                breakdown.append("❌ **PEG > 2.5:** -10 pts (Overvalued) [+1 Risk]")
+                breakdown.append("❌ **PEG > 2.5:** -8 pts (Overvalued) [+1 Risk]")
                 
         if isinstance(t_pe, (float, int)) and isinstance(f_pe, (float, int)):
             if f_pe < t_pe: 
@@ -309,10 +309,10 @@ def get_portfolio_data(port_dict):
         if isinstance(fcf_yield, (float, int)):
             if fcf_yield > 5.0: 
                 score += 10
-                breakdown.append("✅ **FCF Yield > 5%:** +10 pts (Cash Flow Machine)")
+                breakdown.append("✅ **FCF Yield > 5%:** +8 pts (Cash Flow Machine)")
             elif fcf_yield < 0: 
                 score -= 10; risk_points += 1
-                breakdown.append("❌ **Negative FCF Yield:** -10 pts (Cash Burn) [+1 Risk]")
+                breakdown.append("❌ **Negative FCF Yield:** -8 pts (Cash Burn) [+1 Risk]")
             
         # 3. Conviction (HEAVILY WEIGHTED)
         if isinstance(upside, (float, int)):
@@ -361,10 +361,10 @@ def get_portfolio_data(port_dict):
         if isinstance(bb_upper, (float, int)) and current_price > 0:
             if current_price < bb_lower: 
                 score += 5
-                breakdown.append("✅ **Price below Lower BB:** +5 pts (Bounce Support)")
+                breakdown.append("✅ **Price below Lower BB:** +4 pts (Bounce Support)")
             elif current_price > bb_upper: 
                 score -= 5
-                breakdown.append("❌ **Price above Upper BB:** -5 pts (Overextended)")
+                breakdown.append("❌ **Price above Upper BB:** -4 pts (Overextended)")
                 
         if vol_surge and (hist['Close'].iloc[-1] > hist['Open'].iloc[-1]): 
             score += 2 
