@@ -10,7 +10,6 @@ import base64
 import os
 
 # --- SESSION STATE FOR AUDIO ---
-# This tells the app to remember if the sound has been played yet
 if 'startup_sound_played' not in st.session_state:
     st.session_state.startup_sound_played = False
 
@@ -41,9 +40,8 @@ def calculate_bbands(series, window=20, num_std=2):
     return upper, lower
 
 def play_startup_sound():
-    """Plays the startup audio only once per session."""
     if not st.session_state.startup_sound_played:
-        audio_file = "startup.mp3" # Make sure this file exists in your folder!
+        audio_file = "startup.mp3" 
         if os.path.exists(audio_file):
             with open(audio_file, "rb") as f:
                 audio_bytes = f.read()
@@ -55,9 +53,8 @@ def play_startup_sound():
                 </audio>
             """
             st.markdown(audio_html, unsafe_allow_html=True)
-            
-            # Lock the flag so it never plays again until you completely close and reopen the browser tab
             st.session_state.startup_sound_played = True
+
 # --- SESSION STATE FOR WATCHLIST ---
 if 'watchlist' not in st.session_state:
     st.session_state.watchlist = []
@@ -69,37 +66,73 @@ st.sidebar.markdown("Upload your raw **Fidelity positions CSV**, or a standard t
 uploaded_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
 portfolio = {}
 
-# --- NEW: PRIVACY TOGGLE ---
 hide_dollars = st.sidebar.toggle("🙈 Hide Dollar Values", value=False)
 
 if uploaded_file is not None:
     bytes_data = uploaded_file.getvalue()
     try:
-        df_upload = pd.read_csv(io.BytesIO(bytes_data), on_bad_lines='skip', index_col=False)
-    except Exception:
-        st.sidebar.error("Error reading file.")
+        # --- BYPASS FIDELITY FOOTER BUG ---
+        raw_text = bytes_data.decode('utf-8', errors='ignore')
+        if '"The data and information' in raw_text:
+            raw_text = raw_text.split('"The data and information')[0]
+            
+        df_upload = pd.read_csv(io.StringIO(raw_text), on_bad_lines='skip', index_col=False)
+    except Exception as e:
+        st.sidebar.error("Error reading file. Please check format.")
         df_upload = pd.DataFrame()
 
     if 'Account Number' in df_upload.columns and 'Symbol' in df_upload.columns:
-        df_upload = df_upload.dropna(subset=['Symbol', 'Quantity', 'Average Cost Basis'])
+        df_upload = df_upload.dropna(subset=['Symbol', 'Quantity']) 
         for index, row in df_upload.iterrows():
             ticker = str(row['Symbol']).replace('**', '').strip().upper()
             if not ticker or ticker == 'NAN' or 'SPAXX' in ticker: continue
             try:
                 qty = float(str(row['Quantity']).replace(',', ''))
-                avg_cost = float(re.sub(r'[^\d.-]', '', str(row['Average Cost Basis'])))
-                pct_acct = float(str(row['Percent Of Account']).replace('%', '').strip()) if 'Percent Of Account' in row and pd.notna(row['Percent Of Account']) else 0.0
-                gl_pct = float(str(row['Total Gain/Loss Percent']).replace('%', '').replace('+', '').strip()) if 'Total Gain/Loss Percent' in row and pd.notna(row['Total Gain/Loss Percent']) else 0.0
-                portfolio[ticker] = {'shares': qty, 'avg_price': avg_cost, 'pct_acct': pct_acct, 'gl_pct': gl_pct}
+                
+                cost_raw = str(row.get('Average Cost Basis', '0'))
+                cost_clean = re.sub(r'[^\d.-]', '', cost_raw)
+                avg_cost = float(cost_clean) if cost_clean else 0.0
+                
+                # --- LOT AGGREGATION LOGIC ---
+                if ticker in portfolio:
+                    prev_shares = portfolio[ticker]['shares']
+                    prev_avg = portfolio[ticker]['avg_price']
+                    new_shares = prev_shares + qty
+                    new_avg = ((prev_shares * prev_avg) + (qty * avg_cost)) / new_shares if new_shares > 0 else 0
+                    portfolio[ticker]['shares'] = new_shares
+                    portfolio[ticker]['avg_price'] = new_avg
+                else:
+                    portfolio[ticker] = {'shares': qty, 'avg_price': avg_cost, 'pct_acct': 0.0, 'gl_pct': 0.0}
             except: continue
         st.sidebar.success("✅ Fidelity Portfolio loaded successfully!")
         play_startup_sound()
+        
     elif 'Ticker' in df_upload.columns and 'Shares' in df_upload.columns:
         for index, row in df_upload.iterrows():
             ticker = str(row['Ticker']).strip().upper()
-            portfolio[ticker] = {'shares': float(row['Shares']), 'avg_price': float(row['Avg_Price']), 'pct_acct': 0.0, 'gl_pct': 0.0}
+            if not ticker or ticker == 'NAN': continue
+            try:
+                qty_raw = str(row['Shares']).replace(',', '')
+                qty = float(qty_raw) if qty_raw else 0.0
+                
+                cost_raw = str(row.get('Avg_Price', '0'))
+                cost_clean = re.sub(r'[^\d.-]', '', cost_raw)
+                avg_cost = float(cost_clean) if cost_clean else 0.0
+                
+                # --- LOT AGGREGATION LOGIC ---
+                if ticker in portfolio:
+                    prev_shares = portfolio[ticker]['shares']
+                    prev_avg = portfolio[ticker]['avg_price']
+                    new_shares = prev_shares + qty
+                    new_avg = ((prev_shares * prev_avg) + (qty * avg_cost)) / new_shares if new_shares > 0 else 0
+                    portfolio[ticker]['shares'] = new_shares
+                    portfolio[ticker]['avg_price'] = new_avg
+                else:
+                    portfolio[ticker] = {'shares': qty, 'avg_price': avg_cost, 'pct_acct': 0.0, 'gl_pct': 0.0}
+            except: continue
         st.sidebar.success("✅ Standard Portfolio loaded successfully!")
         play_startup_sound()
+
 # --- QUANT DATA FETCHING ENGINE ---
 timeframes = {'1M': 30, '3M': 90, '6M': 180, '1Y': 365, '5Y': 1825}
 
@@ -116,15 +149,15 @@ def get_portfolio_data(port_dict):
         stock = yf.Ticker(ticker)
         
         # --- 1. GET PRICE SAFELY FIRST ---
-        # We grab the price from the market history, which is much less likely to be rate-limited by Yahoo
         hist = stock.history(period='max')
         if not hist.empty:
             current_price = hist['Close'].iloc[-1]
+            hist.index = hist.index.tz_localize(None)
+            all_histories[ticker] = hist
         else:
             current_price = 0.0
             
         # --- 2. GET FUNDAMENTALS SEPARATELY ---
-        # Now, if Yahoo blocks the info scraping, it won't crash your price to $0.00
         try:
             info = stock.info
             t_pe = info.get('trailingPE', 'N/A')
@@ -165,9 +198,6 @@ def get_portfolio_data(port_dict):
                 
                 avg_vol = hist['Volume'].tail(50).mean()
                 if hist['Volume'].iloc[-1] > (avg_vol * 1.5): vol_surge = True
-                
-            hist.index = hist.index.tz_localize(None)
-            all_histories[ticker] = hist
         
         pc_ratio = 'N/A'
         try:
@@ -181,54 +211,99 @@ def get_portfolio_data(port_dict):
         # --- THE ALGORITHM ---
         score = 50 
         risk_points = 0
+        breakdown = ["**Base Score:** 50 pts"]
         
-        # 1a. PEG Ratio (Growth Valuation)
         if isinstance(peg, (float, int)):
-            if peg < 1.0: score += 15
-            elif peg > 2.5: score -= 15; risk_points += 1
+            if peg < 1.0: 
+                score += 15
+                breakdown.append("✅ **PEG < 1.0:** +15 pts (Undervalued growth)")
+            elif peg > 2.5: 
+                score -= 15; risk_points += 1
+                breakdown.append("❌ **PEG > 2.5:** -15 pts (Overvalued) [+1 Risk]")
             
-        # 1b. Standard P/E Logic (Earnings Expansion)
         if isinstance(t_pe, (float, int)) and isinstance(f_pe, (float, int)):
-            if f_pe < t_pe: score += 5  
-            elif f_pe > (t_pe * 1.2): score -= 5 
-            if f_pe > 50 or f_pe < 0: risk_points += 1 
+            if f_pe < t_pe: 
+                score += 5  
+                breakdown.append("✅ **Forward P/E < Trailing:** +5 pts (Earnings expanding)")
+            elif f_pe > (t_pe * 1.2): 
+                score -= 5 
+                breakdown.append("❌ **Forward P/E > Trailing:** -5 pts (Earnings contracting)")
+            if f_pe > 50 or f_pe < 0: 
+                risk_points += 1
+                breakdown.append("⚠️ **Extreme P/E Valuation:** [+1 Risk]")
         elif t_pe == 'N/A' and f_pe == 'N/A':
             risk_points += 1 
+            breakdown.append("⚠️ **Missing Earnings Data:** [+1 Risk]")
             
-        # 2. FCF Yield (Cash Health)
         if isinstance(fcf_yield, (float, int)):
-            if fcf_yield > 5.0: score += 10
-            elif fcf_yield < 0: score -= 10; risk_points += 1
+            if fcf_yield > 5.0: 
+                score += 10
+                breakdown.append("✅ **FCF Yield > 5%:** +10 pts (Strong cash generation)")
+            elif fcf_yield < 0: 
+                score -= 10; risk_points += 1
+                breakdown.append("❌ **Negative FCF Yield:** -10 pts (Cash burn) [+1 Risk]")
             
-        # 3. Target Upside
         if isinstance(upside, (float, int)):
-            if upside > 15: score += 10
-            elif upside < 0: score -= 10
+            if upside > 15: 
+                score += 10
+                breakdown.append(f"✅ **Analyst Upside > 15%:** +10 pts")
+            elif upside < 0: 
+                score -= 10
+                breakdown.append(f"❌ **Analyst Upside Negative:** -10 pts")
             
-        # 4. Insider Ownership (Skin in the Game) <-- NEW LOGIC
         if isinstance(insiders, (float, int)):
-            if insiders >= 0.15: score += 10
-            elif insiders >= 0.05: score += 5
+            if insiders >= 0.15: 
+                score += 10
+                breakdown.append("✅ **Insiders > 15%:** +10 pts (Massive conviction)")
+            elif insiders >= 0.05: 
+                score += 5
+                breakdown.append("✅ **Insiders > 5%:** +5 pts (Strong conviction)")
             
-        # 5. Technical Momentum
         if isinstance(rsi_14, (float, int)):
-            if rsi_14 < 35: score += 10
-            elif rsi_14 > 65: score -= 10
+            if rsi_14 < 35: 
+                score += 10
+                breakdown.append("✅ **RSI < 35:** +10 pts (Oversold/Value Zone)")
+            elif rsi_14 > 65: 
+                score -= 10
+                breakdown.append("❌ **RSI > 65:** -10 pts (Overbought/Exhausted)")
+                
         if isinstance(macd_val, (float, int)) and isinstance(sig_val, (float, int)):
-            if macd_val > sig_val: score += 5
-            else: score -= 5
+            if macd_val > sig_val: 
+                score += 5
+                breakdown.append("✅ **MACD Bullish Cross:** +5 pts")
+            else: 
+                score -= 5
+                breakdown.append("❌ **MACD Bearish Cross:** -5 pts")
+                
         if isinstance(bb_upper, (float, int)) and current_price > 0:
-            if current_price < bb_lower: score += 10
-            elif current_price > bb_upper: score -= 10
-        if vol_surge and (hist['Close'].iloc[-1] > hist['Open'].iloc[-1]): score += 5 
-        if isinstance(pc_ratio, (float, int)):
-            if pc_ratio < 0.7: score += 5
-            elif pc_ratio > 1.2: score -= 5
+            if current_price < bb_lower: 
+                score += 10
+                breakdown.append("✅ **Price below Lower BB:** +10 pts (Mean reversion bounce)")
+            elif current_price > bb_upper: 
+                score -= 10
+                breakdown.append("❌ **Price above Upper BB:** -10 pts (Overextended)")
+                
+        if vol_surge and (hist['Close'].iloc[-1] > hist['Open'].iloc[-1]): 
+            score += 5 
+            breakdown.append("✅ **Bullish Volume Surge:** +5 pts (Institutional buying)")
             
-        if volatility > 60: risk_points += 2
-        elif volatility < 20: risk_points -= 1
+        if isinstance(pc_ratio, (float, int)):
+            if pc_ratio < 0.7: 
+                score += 5
+                breakdown.append("✅ **Put/Call < 0.7:** +5 pts (Bullish options flow)")
+            elif pc_ratio > 1.2: 
+                score -= 5
+                breakdown.append("❌ **Put/Call > 1.2:** -5 pts (Bearish options flow)")
+            
+        if volatility > 60: 
+            risk_points += 2
+            breakdown.append("⚠️ **High Volatility (>60%):** [+2 Risk]")
+        elif volatility < 20: 
+            risk_points -= 1
+            breakdown.append("🛡️ **Low Volatility (<20%):** [-1 Risk]")
 
         score = max(0, min(100, int(score))) 
+        breakdown.append(f"---\n🎯 **Final Quant Score: {score}/100**")
         
         if score >= 80: decision, d_color = "ADD 🟩", "#28a745"
         elif score >= 60: decision, d_color = "HOLD/ACCUMULATE 🟨", "#17a2b8"
@@ -245,12 +320,13 @@ def get_portfolio_data(port_dict):
         
         portfolio_data.append({
             'Ticker': ticker, 'Val': val, 'Price': current_price, 'Shares': shares, 'Avg': avg_price,
-            'Sector': sector, 'Country': country, 'T_PE': t_pe, 'F_PE': f_pe, 'PEG': peg, 'Insiders': insiders, # <--- PACKAGED HERE
+            'Sector': sector, 'Country': country, 'T_PE': t_pe, 'F_PE': f_pe, 'PEG': peg, 'Insiders': insiders, 
             'Target': target, 'Upside': upside, 'FCF_Y': fcf_yield,
             'RSI': rsi_14, 'MACD': macd_val, 'MACD_Sig': sig_val, 'PC_Ratio': pc_ratio, 'Vol': volatility,
             'Score': score, 'Decision': decision, 'D_Color': d_color, 'Risk': risk_lvl, 'R_Color': r_color, 'Risk_Pts': risk_points,
             'Upper_BB': bb_upper, 'Lower_BB': bb_lower,
-            'pct_acct': data.get('pct_acct', 0.0), 'gl_pct': data.get('gl_pct', 0.0)
+            'pct_acct': data.get('pct_acct', 0.0), 'gl_pct': data.get('gl_pct', 0.0),
+            'Breakdown': breakdown
         })
 
     return portfolio_data, all_histories, total_value
@@ -261,7 +337,6 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollar
     cols = st.columns([1.6, 1, 1, 1, 1, 1]) 
     is_search_or_watch = stock['Shares'] == 0 
     
-    # --- TOOLTIP DICTIONARY ---
     signal_tooltips = {
         "ADD 🟩": "Perfect confluence. Undervalued (low PEG/FCF) AND immediate technicals flashing buy (RSI, MACD, BB). Deploy capital now.",
         "HOLD/ACCUMULATE 🟨": "Macro trend and valuation healthy, but short-term headwinds. Buy in small, incremental tranches (DCA).",
@@ -279,16 +354,20 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollar
                     st.session_state.watchlist.remove(ticker)
                     st.rerun()
 
-        # Extract the correct tooltip based on the stock's decision
         hover_text = signal_tooltips.get(stock['Decision'], "Quant Engine Signal")
 
-        # Injected the 'title' attribute for the hover pop-up and 'cursor: help' for the mouse icon
         st.markdown(
-            f"<div title='{hover_text}' style='border:1px solid {stock['D_Color']}; padding: 10px; border-radius: 5px; margin-bottom: 10px; cursor: help;'>"
+            f"<div title='{hover_text}' style='border:1px solid {stock['D_Color']}; padding: 10px; border-radius: 5px; margin-bottom: 5px; cursor: help;'>"
             f"<h4 style='margin:0; color:{stock['D_Color']};'>Signal: {stock['Decision']}</h4>"
             f"<p style='margin:0; font-size:14px;'>Quant Score: <b>{stock['Score']}/100</b> | Risk: <span style='color:{stock['R_Color']};'><b>{stock['Risk']}</b></span></p>"
             f"</div>", unsafe_allow_html=True
         )
+        
+        # --- NEW: SCORE BREAKDOWN POPOVER ---
+        with st.popover("📊 Score Breakdown", use_container_width=True):
+            st.markdown(f"### {ticker} Algorithmic Breakdown")
+            for line in stock.get('Breakdown', []):
+                st.write(line)
         
         sub1, sub2 = st.columns(2)
         with sub1:
@@ -313,29 +392,22 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollar
             macd_status = "Bullish" if (isinstance(stock['MACD'], (float, int)) and stock['MACD'] > stock['MACD_Sig']) else "Bearish"
             st.write(f"**MACD:** {macd_status}")
 
-# --- NEW: FORMAT INSIDER PERCENTAGE ---
             ins_val = stock.get('Insiders', 'N/A')
             ins_str = f"{ins_val * 100:.1f}%" if isinstance(ins_val, (float, int)) else 'N/A'
 
-            st.write(f"**P/C Ratio:** {stock['PC_Ratio']}")
+            st.write(f"**P/C Ratio:** {stock['PC_Ratio']} | **Insiders:** {ins_str}")
 
         if not is_search_or_watch:
             ret = ((stock['Price'] - stock['Avg']) / stock['Avg']) * 100 if stock['Avg'] > 0 else 0
             
+            # Use dot characters so Markdown doesn't get confused by asterisks
             avg_str = "$••••" if hide_dollars else f"${stock['Avg']:.2f}"
             val_str = "$••••" if hide_dollars else f"${stock['Val']:,.0f}"
             
-            ret_color = "#2ca02c" if ret >= 0 else "#d62728"
+            # Use native Streamlit colors
+            ret_color = "green" if ret >= 0 else "red"
+            st.markdown(f"**My Return:** :{ret_color}[{ret:+.2f}%] | **Avg Cost:** {avg_str} | **Value:** {val_str}")
             
-            # Wrapping it in a block-level <div> forces Streamlit to render as pure HTML
-            html_string = (
-                f"<div style='font-size: 15px; margin-top: 5px; margin-bottom: 5px;'>"
-                f"<b>My Return:</b> <span style='color:{ret_color}; font-weight:bold;'>{ret:+.2f}%</span> &nbsp;|&nbsp; "
-                f"<b>Avg Cost:</b> {avg_str} &nbsp;|&nbsp; "
-                f"<b>Value:</b> {val_str}"
-                f"</div>"
-            )
-            st.markdown(html_string, unsafe_allow_html=True)
     master_hist = histories.get(ticker)
     if master_hist is not None and not master_hist.empty:
         if len(master_hist) > 20:
@@ -350,7 +422,6 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollar
                     end_p = sliced_hist['Close'].iloc[-1]
                     line_color = '#2ca02c' if end_p >= start_p else '#d62728'
                     
-                    # --- DYNAMIC PERCENTAGE HEADERS ---
                     tf_ret = ((end_p - start_p) / start_p) * 100 if start_p > 0 else 0
                     header_text = f"{tf_label} <span style='color:{line_color}; font-size:13px;'>({tf_ret:+.2f}%)</span>"
                     
@@ -435,15 +506,12 @@ if st.checkbox("Run Market Scan (Takes ~20 seconds to load)"):
         df_market['Upside_Safe'] = pd.to_numeric(df_market['Upside'], errors='coerce').fillna(0)
         df_top10 = df_market.sort_values(by=['Score', 'Upside_Safe'], ascending=[False, False]).head(10)
         
-        # --- NEW: CLEAN CSV EXPORT ---
         # Select only the relevant columns for a clean spreadsheet
         export_cols = ['Ticker', 'Price', 'Score', 'Decision', 'Risk', 'Sector', 'T_PE', 'F_PE', 'PEG', 'Insiders', 'Upside', 'FCF_Y', 'RSI', 'PC_Ratio']
         df_export = df_top10[export_cols].copy()
         
-        # Convert the cleaned dataframe to CSV format in memory
         csv_data = df_export.to_csv(index=False).encode('utf-8')
         
-        # Place the download button neatly above the stock cards
         col_space, col_btn = st.columns([8, 2])
         with col_btn:
             st.download_button(
@@ -453,7 +521,6 @@ if st.checkbox("Run Market Scan (Takes ~20 seconds to load)"):
                 mime="text/csv"
             )
         
-        # Draw the stock cards
         for idx, row in df_top10.iterrows():
             draw_stock_row(row.to_dict(), market_hist, today, hide_dollars=hide_dollars)
 st.divider()
@@ -472,7 +539,6 @@ if portfolio:
             st.subheader(f"Total Live Portfolio Value: {total_val_str}")
             
         with col_export:
-            # --- NEW: Export your live portfolio grades ---
             df_port = pd.DataFrame(data)
             port_cols = ['Ticker', 'Shares', 'Avg', 'Price', 'Score', 'Decision', 'Risk', 'Sector', 'PEG', 'Insiders', 'Upside']
             csv_port = df_port[port_cols].to_csv(index=False).encode('utf-8')
@@ -481,9 +547,9 @@ if portfolio:
         st.markdown("### 🩺 Portfolio Health & Diversification")
         
         df_metrics = pd.DataFrame(data)
-
+        
         # --- THE FIX: Force the Weight column to exist no matter what! ---
-        df_metrics['Weight'] = 0.0
+        df_metrics['Weight'] = 0.0 
         
         if total_val > 0:
             df_metrics['Weight'] = df_metrics['Val'] / total_val
@@ -501,7 +567,6 @@ if portfolio:
         dom_weight = df_metrics[df_metrics['Is_Domestic']]['Weight'].sum() * 100
         intl_weight = df_metrics[~df_metrics['Is_Domestic']]['Weight'].sum() * 100
         
-        # ---> THIS IS THE UPDATED COLUMN SPACING <---
         h_cols = st.columns([0.8, .8, 1.3, 1.3])
         
         with h_cols[0]:
