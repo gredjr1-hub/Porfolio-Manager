@@ -468,6 +468,9 @@ if portfolio:
         st.markdown("### 🩺 Portfolio Health & Diversification")
         
         df_metrics = pd.DataFrame(data)
+
+        # --- NEW: We MUST add this line to prevent the crash! ---
+        df_metrics['Weight'] = 0.0
         
         if total_val > 0:
             df_metrics['Weight'] = df_metrics['Val'] / total_val
