@@ -75,9 +75,15 @@ hide_dollars = st.sidebar.toggle("🙈 Hide Dollar Values", value=False)
 if uploaded_file is not None:
     bytes_data = uploaded_file.getvalue()
     try:
-        df_upload = pd.read_csv(io.BytesIO(bytes_data), on_bad_lines='skip', index_col=False)
-    except Exception:
-        st.sidebar.error("Error reading file.")
+        # --- NEW: BYPASS FIDELITY FOOTER BUG ---
+        raw_text = bytes_data.decode('utf-8', errors='ignore')
+        # Chop off the massive legal disclaimer before Pandas even sees it
+        if '"The data and information' in raw_text:
+            raw_text = raw_text.split('"The data and information')[0]
+            
+        df_upload = pd.read_csv(io.StringIO(raw_text), on_bad_lines='skip', index_col=False)
+    except Exception as e:
+        st.sidebar.error(f"Error reading file. Please check format.")
         df_upload = pd.DataFrame()
 
     if 'Account Number' in df_upload.columns and 'Symbol' in df_upload.columns:
