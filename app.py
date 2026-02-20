@@ -347,7 +347,11 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollar
     
     with cols[0]:
         title_col, btn_col = st.columns([3, 1])
-        with title_col: st.markdown(f"### **{ticker}**")
+        with title_col: 
+            st.markdown(f"### **{ticker}**")
+            # --- NEW: Finviz Quick Link (Forces opening in a new tab) ---
+            st.markdown(f"<a href='https://finviz.com/quote.ashx?t={ticker}' target='_blank' style='text-decoration: none; font-size: 14px;'>🔗 Finviz</a>", unsafe_allow_html=True)
+            
         with btn_col:
             if is_watchlist:
                 if st.button("❌", key=f"remove_{ticker}"):
