@@ -316,20 +316,13 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollar
         if not is_search_or_watch:
             ret = ((stock['Price'] - stock['Avg']) / stock['Avg']) * 100 if stock['Avg'] > 0 else 0
             
+            # Use dot characters so Markdown doesn't get confused by asterisks
             avg_str = "$••••" if hide_dollars else f"${stock['Avg']:.2f}"
             val_str = "$••••" if hide_dollars else f"${stock['Val']:,.0f}"
             
-            ret_color = "#2ca02c" if ret >= 0 else "#d62728"
-            
-            # Wrapping it in a block-level <div> forces Streamlit to render as pure HTML
-            html_string = (
-                f"<div style='font-size: 15px; margin-top: 5px; margin-bottom: 5px;'>"
-                f"<b>My Return:</b> <span style='color:{ret_color}; font-weight:bold;'>{ret:+.2f}%</span> &nbsp;|&nbsp; "
-                f"<b>Avg Cost:</b> {avg_str} &nbsp;|&nbsp; "
-                f"<b>Value:</b> {val_str}"
-                f"</div>"
-            )
-            st.markdown(html_string, unsafe_allow_html=True)
+            # Use native Streamlit colors
+            ret_color = "green" if ret >= 0 else "red"
+            st.markdown(f"**My Return:** :{ret_color}[{ret:+.2f}%] | **Avg Cost:** {avg_str} | **Value:** {val_str}")
     master_hist = histories.get(ticker)
     if master_hist is not None and not master_hist.empty:
         if len(master_hist) > 20:
