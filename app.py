@@ -270,7 +270,7 @@ def get_portfolio_data(port_dict):
         if isinstance(roe, (float, int)):
             if roe >= 0.15: 
                 score += 15
-                breakdown.append(f"✅ **ROE > 15%:** +10 pts (Elite Capital Efficiency)")
+                breakdown.append(f"✅ **ROE > 15%:** +8 pts (Elite Capital Efficiency)")
             elif roe < 0.05: 
                 score -= 15; risk_points += 1
                 breakdown.append(f"❌ **ROE < 5%:** -10 pts (Poor Capital Efficiency) [+1 Risk]")
@@ -278,27 +278,27 @@ def get_portfolio_data(port_dict):
         if isinstance(margins, (float, int)):
             if margins >= 0.40:
                 score += 10
-                breakdown.append(f"✅ **Gross Margins > 40%:** +8 pts (Strong Pricing Power)")
+                breakdown.append(f"✅ **Gross Margins > 40%:** +6 pts (Strong Pricing Power)")
             elif margins < 0.10:
                 score -= 10
-                breakdown.append(f"❌ **Gross Margins < 10%:** -8 pts (Vulnerable to Inflation)")
+                breakdown.append(f"❌ **Gross Margins < 10%:** -6 pts (Vulnerable to Inflation)")
 
         # 2. Valuation (HEAVILY WEIGHTED)
         if isinstance(peg, (float, int)):
             if peg < 1.0: 
                 score += 10
-                breakdown.append("✅ **PEG < 1.0:** +8 pts (Undervalued Growth)")
+                breakdown.append("✅ **PEG < 1.0:** +6 pts (Undervalued Growth)")
             elif peg > 2.5: 
                 score -= 10; risk_points += 1
-                breakdown.append("❌ **PEG > 2.5:** -8 pts (Overvalued) [+1 Risk]")
+                breakdown.append("❌ **PEG > 2.5:** -7 pts (Overvalued) [+1 Risk]")
                 
         if isinstance(t_pe, (float, int)) and isinstance(f_pe, (float, int)):
             if f_pe < t_pe: 
                 score += 10  
-                breakdown.append("✅ **Forward P/E < Trailing:** +8 pts (Earnings Expanding)")
+                breakdown.append("✅ **Forward P/E < Trailing:** +6 pts (Earnings Expanding)")
             elif f_pe > (t_pe * 1.2): 
                 score -= 10 
-                breakdown.append("❌ **Forward P/E > Trailing:** -8 pts (Earnings Contracting)")
+                breakdown.append("❌ **Forward P/E > Trailing:** -7 pts (Earnings Contracting)")
             if f_pe > 50 or f_pe < 0: 
                 risk_points += 1
                 breakdown.append("⚠️ **Extreme P/E Valuation:** [+1 Risk]")
@@ -309,19 +309,19 @@ def get_portfolio_data(port_dict):
         if isinstance(fcf_yield, (float, int)):
             if fcf_yield > 5.0: 
                 score += 10
-                breakdown.append("✅ **FCF Yield > 5%:** +8 pts (Cash Flow Machine)")
+                breakdown.append("✅ **FCF Yield > 5%:** +5 pts (Cash Flow Machine)")
             elif fcf_yield < 0: 
                 score -= 10; risk_points += 1
-                breakdown.append("❌ **Negative FCF Yield:** -8 pts (Cash Burn) [+1 Risk]")
+                breakdown.append("❌ **Negative FCF Yield:** -5 pts (Cash Burn) [+1 Risk]")
             
         # 3. Conviction (HEAVILY WEIGHTED)
         if isinstance(upside, (float, int)):
             if upside > 15: 
                 score += 10
-                breakdown.append(f"✅ **Analyst Upside > 15%:** +8 pts")
+                breakdown.append(f"✅ **Analyst Upside > 15%:** +6 pts")
             elif upside < 0: 
                 score -= 10
-                breakdown.append(f"❌ **Analyst Upside Negative:** -8 pts")
+                breakdown.append(f"❌ **Analyst Upside Negative:** -6 pts")
             
         if isinstance(insiders, (float, int)):
             if insiders >= 0.15: 
@@ -336,7 +336,7 @@ def get_portfolio_data(port_dict):
             sma_200 = hist['200_SMA'].iloc[-1]
             if current_price > sma_200:
                 score += 10
-                breakdown.append("✅ **Price > 200 SMA:** +5 pts (Long-Term Bull Trend)")
+                breakdown.append("✅ **Price > 200 SMA:** +2 pts (Long-Term Bull Trend)")
             else:
                 score -= 10
                 breakdown.append("❌ **Price < 200 SMA:** -5 pts (Long-Term Bear Trend)")
@@ -345,7 +345,7 @@ def get_portfolio_data(port_dict):
         if isinstance(rsi_14, (float, int)):
             if rsi_14 < 35: 
                 score += 5
-                breakdown.append("✅ **RSI < 35:** +5 pts (Short-Term Oversold)")
+                breakdown.append("✅ **RSI < 35:** +6 pts (Short-Term Oversold)")
             elif rsi_14 > 65: 
                 score -= 5
                 breakdown.append("❌ **RSI > 65:** -7 pts (Short-Term Overbought)")
@@ -353,30 +353,30 @@ def get_portfolio_data(port_dict):
         if isinstance(macd_val, (float, int)) and isinstance(sig_val, (float, int)):
             if macd_val > sig_val: 
                 score += 3
-                breakdown.append("✅ **MACD Bullish:** +4 pts")
+                breakdown.append("✅ **MACD Bullish:** +5 pts")
             else: 
                 score -= 3
-                breakdown.append("❌ **MACD Bearish:** -4 pts")
+                breakdown.append("❌ **MACD Bearish:** -5 pts")
                 
         if isinstance(bb_upper, (float, int)) and current_price > 0:
             if current_price < bb_lower: 
                 score += 5
-                breakdown.append("✅ **Price below Lower BB:** +4 pts (Bounce Support)")
+                breakdown.append("✅ **Price below Lower BB:** +5 pts (Bounce Support)")
             elif current_price > bb_upper: 
                 score -= 5
-                breakdown.append("❌ **Price above Upper BB:** -4 pts (Overextended)")
+                breakdown.append("❌ **Price above Upper BB:** -5 pts (Overextended)")
                 
         if vol_surge and (hist['Close'].iloc[-1] > hist['Open'].iloc[-1]): 
             score += 2 
-            breakdown.append("✅ **Volume Surge:** +4 pts")
+            breakdown.append("✅ **Volume Surge:** +5 pts")
             
         if isinstance(pc_ratio, (float, int)):
             if pc_ratio < 0.7: 
                 score += 3
-                breakdown.append("✅ **Put/Call < 0.7:** +4 pts (Bull Options Flow)")
+                breakdown.append("✅ **Put/Call < 0.7:** +5 pts (Bull Options Flow)")
             elif pc_ratio > 1.2: 
                 score -= 3
-                breakdown.append("❌ **Put/Call > 1.2:** -4 pts (Bear Options Flow)")
+                breakdown.append("❌ **Put/Call > 1.2:** -5 pts (Bear Options Flow)")
             
         if volatility > 60: 
             risk_points += 2
