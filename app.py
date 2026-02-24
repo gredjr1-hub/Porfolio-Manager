@@ -651,14 +651,14 @@ if st.session_state.watchlist:
     for stock in watch_data: draw_stock_row(stock, watch_hist, today, is_watchlist=True, hide_dollars=hide_dollars, score_history=global_scores_df)
 
 st.markdown("### 🏆 Top 10 Market Scanner")
-st.markdown("Live scan of a curated universe of 50 global megacap and hyper-growth stocks to find the best immediate setups.")
+st.markdown("Live scan of a curated universe of global megacap and hyper-growth stocks to find the best immediate setups.")
 
 global_universe = [
     'AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'META', 'TSM', 'AVGO', 'NVO', 'JPM', 
     'WMT', 'LLY', 'V', 'PG', 'MA', 'JNJ', 'ASML', 'HD', 'ORCL', 'COST', 
     'CVX', 'BABA', 'CRM', 'AMD', 'BAC', 'PEP', 'LIN', 'KO', 'ADBE', 'DIS', 
     'CSCO', 'TM', 'INTC', 'VZ', 'PFE', 'NKE', 'SHEL', 'AZN', 'NVS', 'SAP', 
-    'SNY', 'SONY', 'RY', 'PLTR', 'UBER', 'CRWD', 'PANW', 'ARM', 'SMCI', 'ALB', 'NFLX', 'CVS', 'HOOD', 'IBM', 'IREN', 'LRCX', 'AMAT', 'XOM', 'LMT', 'ZETA', 'ACHR', 'UNH', 'NKE', 'COIN', 'NVO'
+    'SNY', 'SONY', 'RY', 'PLTR', 'UBER', 'CRWD', 'PANW', 'ARM', 'SMCI', 'ALB', 'NFLX', 'CVS', 'HOOD', 'IBM', 'IREN', 'LRCX', 'AMAT', 'XOM', 'LMT', 'ZETA', 'ACHR', 'UNH', 'NKE', 'COIN', 'NVO', 'ANET', 'CRSP', 'CRWV', 'DIS', 'DUK', 'GLXY', 'LULU', 'NBIS', 'NRG', 'SBUX', 'TSLA'
 ]
 
 if st.checkbox("Run Market Scan (Takes ~20 seconds to load)"):
