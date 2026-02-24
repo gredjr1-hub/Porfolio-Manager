@@ -4,3 +4,4 @@ pandas
 numpy
 plotly
 gspread
+google-auth
