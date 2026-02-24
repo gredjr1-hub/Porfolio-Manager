@@ -187,8 +187,6 @@ if uploaded_file is not None:
         play_startup_sound()
 
 # --- QUANT DATA FETCHING ENGINE ---
-timeframes = {'1M': 30, '3M': 90, '6M': 180, '1Y': 365, '5Y': 1825}
-
 @st.cache_data(ttl=3600) 
 def get_portfolio_data(port_dict):
     if not port_dict: return [], {}, 0 
@@ -291,7 +289,6 @@ def get_portfolio_data(port_dict):
                 score -= 7; risk_points += 1
                 breakdown.append("❌ **PEG > 2.5:** -7 pts (Overvalued) [+1 Risk]")
                 
-        # --- RESTORED: Fwd vs Trailing P/E ---
         if isinstance(t_pe, (float, int)) and isinstance(f_pe, (float, int)):
             if f_pe < t_pe: 
                 score += 5  
@@ -314,7 +311,6 @@ def get_portfolio_data(port_dict):
                 score -= 5; risk_points += 1
                 breakdown.append("❌ **Negative FCF Yield:** -5 pts (Cash burn) [+1 Risk]")
             
-        # --- RESTORED: Analyst Upside Target ---
         if isinstance(upside, (float, int)):
             if upside > 25: 
                 score += 10
@@ -409,7 +405,8 @@ def get_portfolio_data(port_dict):
 # --- UI HELPER FUNCTION ---
 def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollars=False, score_history=None):
     ticker = stock['Ticker']
-    cols = st.columns([1.6, 1, 1, 1, 1, 1]) 
+    # Changed from 6 columns to a 2-column layout (Info vs Interactive Chart)
+    cols = st.columns([2, 4]) 
     is_search_or_watch = stock['Shares'] == 0 
     
     signal_tooltips = {
@@ -432,7 +429,6 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollar
                     st.session_state.watchlist.remove(ticker)
                     st.rerun()
 
-        # --- TREND INDICATOR ARROWS ---
         trend_html = ""
         if score_history is not None and not score_history.empty:
             t_scores = score_history[score_history['Ticker'] == ticker].copy()
@@ -470,7 +466,6 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollar
         with sub1:
             st.write(f"**Price:** ${stock.get('Price', 0.0):.2f}")
             
-            # --- UPDATED UI: Showing T|F P/E, PEG, and Analyst Upside! ---
             t_pe = stock.get('T_PE', 'N/A')
             f_pe = stock.get('F_PE', 'N/A')
             peg = stock.get('PEG', 'N/A')
@@ -503,7 +498,6 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollar
             
             ret_color = "#2ca02c" if ret >= 0 else "#d62728"
             
-            # --- THE HTML FIX: Forces proper bolding and colors to never bleed ---
             html_string = (
                 f"<div style='font-size: 15px; margin-top: 5px; margin-bottom: 5px;'>"
                 f"<b>My Return:</b> <span style='color:{ret_color}; font-weight:bold;'>{ret:+.2f}%</span> &nbsp;|&nbsp; "
@@ -526,53 +520,54 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollar
         if len(master_hist) > 20:
             master_hist['BB_Upper'], master_hist['BB_Lower'] = calculate_bbands(master_hist['Close'])
 
-        for i, (tf_label, days_back) in enumerate(timeframes.items()):
-            with cols[i+1]:
-                start_date = today_date - timedelta(days=days_back)
-                sliced_hist = master_hist[master_hist.index >= start_date]
-                if not sliced_hist.empty:
-                    start_p = sliced_hist['Close'].iloc[0]
-                    end_p = sliced_hist['Close'].iloc[-1]
-                    line_color = '#2ca02c' if end_p >= start_p else '#d62728'
-                    
-                    tf_ret = ((end_p - start_p) / start_p) * 100 if start_p > 0 else 0
-                    header_text = f"{tf_label} <span style='color:{line_color}; font-size:13px;'>({tf_ret:+.2f}%)</span>"
-                    
-                    fig = go.Figure()
-                    
-                    if 'Score' in sliced_hist.columns and not sliced_hist['Score'].dropna().empty:
-                        fig.add_trace(go.Scatter(
-                            x=sliced_hist.index, y=sliced_hist['Score'], mode='lines', 
-                            name='Quant Score', line=dict(color='fuchsia', width=2, dash='dot'), yaxis='y2'
-                        ))
+        # --- THE NEW INTERACTIVE CHART ---
+        with cols[1]:
+            fig = go.Figure()
+            
+            if 'Score' in master_hist.columns and not master_hist['Score'].dropna().empty:
+                fig.add_trace(go.Scatter(x=master_hist.index, y=master_hist['Score'], mode='lines', name='Quant Score', line=dict(color='rgba(255, 0, 255, 0.4)', width=2, dash='dot'), yaxis='y2'))
 
-                    if 'BB_Upper' in sliced_hist.columns and not sliced_hist['BB_Upper'].dropna().empty:
-                        fig.add_trace(go.Scatter(x=sliced_hist.index, y=sliced_hist['BB_Upper'], mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'))
-                        fig.add_trace(go.Scatter(x=sliced_hist.index, y=sliced_hist['BB_Lower'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(173, 216, 230, 0.2)', showlegend=False, hoverinfo='skip'))
+            if 'BB_Upper' in master_hist.columns and not master_hist['BB_Upper'].dropna().empty:
+                fig.add_trace(go.Scatter(x=master_hist.index, y=master_hist['BB_Upper'], mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'))
+                fig.add_trace(go.Scatter(x=master_hist.index, y=master_hist['BB_Lower'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor='rgba(173, 216, 230, 0.1)', showlegend=False, hoverinfo='skip'))
 
-                    fig.add_trace(go.Scatter(x=sliced_hist.index, y=sliced_hist['Close'], mode='lines', name='Price', line=dict(color=line_color, width=2.5)))
-                    
-                    if '200_WMA' in sliced_hist.columns and not sliced_hist['200_WMA'].dropna().empty:
-                        fig.add_trace(go.Scatter(x=sliced_hist.index, y=sliced_hist['200_WMA'], mode='lines', name='200 WMA', line=dict(color='darkorange', width=2, dash='dash')))
-                        
-                    if '50_SMA' in sliced_hist.columns and not sliced_hist['50_SMA'].dropna().empty:
-                        fig.add_trace(go.Scatter(x=sliced_hist.index, y=sliced_hist['50_SMA'], mode='lines', name='50 SMA', line=dict(color='gold', width=1.5, dash='dot')))
-                        
-                    if '200_SMA' in sliced_hist.columns and not sliced_hist['200_SMA'].dropna().empty:
-                        fig.add_trace(go.Scatter(x=sliced_hist.index, y=sliced_hist['200_SMA'], mode='lines', name='200 SMA', line=dict(color='mediumpurple', width=2, dash='dash')))
-                    
-                    if stock['Avg'] > 0:
-                        fig.add_hline(y=stock['Avg'], line_dash="dot", line_color="deepskyblue", line_width=2, opacity=0.8)
-                    
-                    fig.update_layout(
-                        title=dict(text=header_text, font=dict(size=14)), margin=dict(l=0, r=0, t=30, b=0),
-                        xaxis=dict(visible=False), 
-                        yaxis=dict(visible=False), 
-                        yaxis2=dict(range=[0, 100], overlaying='y', side='right', visible=False), 
-                        showlegend=False, height=190,
-                        plot_bgcolor='rgba(0,0,0,0)', hovermode='x unified'
-                    )
-                    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+            fig.add_trace(go.Scatter(x=master_hist.index, y=master_hist['Close'], mode='lines', name='Price', line=dict(color='#2ca02c', width=2.5)))
+            
+            if '200_WMA' in master_hist.columns and not master_hist['200_WMA'].dropna().empty:
+                fig.add_trace(go.Scatter(x=master_hist.index, y=master_hist['200_WMA'], mode='lines', name='200 WMA', line=dict(color='darkorange', width=2, dash='dash')))
+            if '50_SMA' in master_hist.columns and not master_hist['50_SMA'].dropna().empty:
+                fig.add_trace(go.Scatter(x=master_hist.index, y=master_hist['50_SMA'], mode='lines', name='50 SMA', line=dict(color='gold', width=1.5, dash='dot')))
+            if '200_SMA' in master_hist.columns and not master_hist['200_SMA'].dropna().empty:
+                fig.add_trace(go.Scatter(x=master_hist.index, y=master_hist['200_SMA'], mode='lines', name='200 SMA', line=dict(color='mediumpurple', width=2, dash='dash')))
+            
+            if stock['Avg'] > 0:
+                fig.add_hline(y=stock['Avg'], line_dash="dot", line_color="deepskyblue", line_width=2, opacity=0.8)
+            
+            fig.update_layout(
+                margin=dict(l=0, r=0, t=10, b=0),
+                xaxis=dict(
+                    rangeselector=dict(
+                        buttons=list([
+                            dict(count=1, label="1m", step="month", stepmode="backward"),
+                            dict(count=3, label="3m", step="month", stepmode="backward"),
+                            dict(count=6, label="6m", step="month", stepmode="backward"),
+                            dict(count=1, label="1y", step="year", stepmode="backward"),
+                            dict(step="all", label="Max")
+                        ]),
+                        bgcolor='rgba(150, 150, 150, 0.1)',
+                        activecolor='rgba(44, 160, 44, 0.5)'
+                    ),
+                    type="date"
+                ),
+                yaxis=dict(visible=True, side='left'), 
+                yaxis2=dict(range=[0, 100], overlaying='y', side='right', visible=False), 
+                showlegend=False, 
+                height=350, 
+                plot_bgcolor='rgba(0,0,0,0)', 
+                hovermode='x unified'
+            )
+            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+            
     st.divider()
 
 # --- APP LAYOUT ---
@@ -615,7 +610,7 @@ global_universe = [
     'WMT', 'LLY', 'V', 'PG', 'MA', 'JNJ', 'ASML', 'HD', 'ORCL', 'COST', 
     'CVX', 'BABA', 'CRM', 'AMD', 'BAC', 'PEP', 'LIN', 'KO', 'ADBE', 'DIS', 
     'CSCO', 'TM', 'INTC', 'VZ', 'PFE', 'NKE', 'SHEL', 'AZN', 'NVS', 'SAP', 
-    'SNY', 'SONY', 'RY', 'PLTR', 'UBER', 'CRWD', 'PANW', 'ARM', 'SMCI', 'ALB', 'NFLX', 'CVS', 'HOOD'
+    'SNY', 'SONY', 'RY', 'PLTR', 'UBER', 'CRWD', 'PANW', 'ARM', 'SMCI', 'ALB', 'NFLX', 'CVS', 'HOOD', 'IBM', 'IREN', 'LRCX', 'AMAT', 'XOM', 'LMT', 'ZETA', 'ACHR', 'UNH', 'NKE', 'COIN', 'NVO'
 ]
 
 if st.checkbox("Run Market Scan (Takes ~20 seconds to load)"):
