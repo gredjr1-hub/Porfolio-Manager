@@ -17,16 +17,41 @@ if 'startup_sound_played' not in st.session_state:
 
 st.set_page_config(page_title="Quant Command Center", layout="wide", page_icon="📈")
 
-# --- DATA LOADERS ---
+# --- DATA LOADERS & MULTI-DEVICE LOGGING ---
 @st.cache_data(ttl=60)
 def load_score_history():
-    """Loads the historical quant scores from the local CSV log."""
+    """Loads the historical quant scores, preferring Google Sheets and falling back to CSV."""
+    try:
+        # Check if secrets exist for Google Cloud
+        if "gcp_service_account" in st.secrets:
+            import gspread
+            from google.oauth2.service_account import Credentials
+            
+            scopes = [
+                "https://www.googleapis.com/auth/spreadsheets",
+                "https://www.googleapis.com/auth/drive"
+            ]
+            skey = dict(st.secrets["gcp_service_account"])
+            credentials = Credentials.from_service_account_info(skey, scopes=scopes)
+            gc = gspread.authorize(credentials)
+            
+            # Pull from Google Sheet
+            sheet = gc.open("Stock_Quant_History").sheet1
+            data = sheet.get_all_records()
+            if data:
+                df = pd.DataFrame(data)
+                df['Date'] = pd.to_datetime(df['Date']).dt.tz_localize(None)
+                return df
+    except Exception:
+        pass # Fail silently and fallback to local CSV
+
     if os.path.exists("historical_quant_scores.csv"):
         try:
             df = pd.read_csv("historical_quant_scores.csv")
             df['Date'] = pd.to_datetime(df['Date']).dt.tz_localize(None)
             return df
         except Exception: pass
+        
     return pd.DataFrame()
 
 # --- ALGORITHMIC HELPER FUNCTIONS ---
@@ -70,11 +95,47 @@ def play_startup_sound():
             st.session_state.startup_sound_played = True
 
 # --- FORWARD LOGGING DATABASE ---
-def log_scores_to_csv(portfolio_data):
-    """Silently logs today's scores to a local CSV for future backtesting."""
-    filename = "historical_quant_scores.csv"
+def log_scores(portfolio_data):
+    """Logs scores to Google Sheets if configured, otherwise safely falls back to local CSV."""
     today_str = datetime.today().strftime('%Y-%m-%d')
     
+    # 1. Try Google Sheets First
+    try:
+        if "gcp_service_account" in st.secrets:
+            import gspread
+            from google.oauth2.service_account import Credentials
+            
+            scopes = [
+                "https://www.googleapis.com/auth/spreadsheets",
+                "https://www.googleapis.com/auth/drive"
+            ]
+            skey = dict(st.secrets["gcp_service_account"])
+            credentials = Credentials.from_service_account_info(skey, scopes=scopes)
+            gc = gspread.authorize(credentials)
+            
+            sheet = gc.open("Stock_Quant_History").sheet1
+            existing_data = sheet.get_all_records()
+            existing_records = set((str(row.get('Date', '')), str(row.get('Ticker', ''))) for row in existing_data)
+            
+            new_rows = []
+            for stock in portfolio_data:
+                record_key = (today_str, stock['Ticker'])
+                if record_key not in existing_records:
+                    new_rows.append([
+                        today_str, stock['Ticker'], round(stock['Price'], 2), stock['Score'], 
+                        stock['Decision'], stock['Risk_Pts'], stock.get('ROE', 'N/A'), 
+                        stock.get('Margins', 'N/A'), stock.get('PEG', 'N/A'), stock.get('FCF_Y', 'N/A'),
+                        stock.get('Insiders', 'N/A'), stock.get('Upside', 'N/A')
+                    ])
+                    
+            if new_rows:
+                sheet.append_rows(new_rows)
+            return # Exit function if GSheets succeeds
+    except Exception:
+        pass # If anything fails, drop down to local CSV fallback
+        
+    # 2. Local CSV Fallback
+    filename = "historical_quant_scores.csv"
     file_exists = os.path.isfile(filename)
     existing_records = set()
     
@@ -82,33 +143,21 @@ def log_scores_to_csv(portfolio_data):
         try:
             with open(filename, 'r', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
-                for row in reader:
-                    existing_records.add((row['Date'], row['Ticker']))
+                for row in reader: existing_records.add((row['Date'], row['Ticker']))
         except Exception: pass
             
     with open(filename, 'a', newline='', encoding='utf-8') as f:
         fieldnames = ['Date', 'Ticker', 'Price', 'Score', 'Decision', 'Risk_Pts', 'ROE', 'Margins', 'PEG', 'FCF_Y', 'Insiders', 'Upside']
         writer = csv.DictWriter(f, fieldnames=fieldnames)
-        
-        if not file_exists:
-            writer.writeheader()
-            
+        if not file_exists: writer.writeheader()
         for stock in portfolio_data:
-            record_key = (today_str, stock['Ticker'])
-            if record_key not in existing_records:
+            if (today_str, stock['Ticker']) not in existing_records:
                 writer.writerow({
-                    'Date': today_str,
-                    'Ticker': stock['Ticker'],
-                    'Price': round(stock['Price'], 2),
-                    'Score': stock['Score'],
-                    'Decision': stock['Decision'],
-                    'Risk_Pts': stock['Risk_Pts'],
-                    'ROE': stock.get('ROE', 'N/A'),
-                    'Margins': stock.get('Margins', 'N/A'),
-                    'PEG': stock.get('PEG', 'N/A'),
-                    'FCF_Y': stock.get('FCF_Y', 'N/A'),
-                    'Insiders': stock.get('Insiders', 'N/A'),
-                    'Upside': stock.get('Upside', 'N/A')
+                    'Date': today_str, 'Ticker': stock['Ticker'], 'Price': round(stock['Price'], 2), 
+                    'Score': stock['Score'], 'Decision': stock['Decision'], 'Risk_Pts': stock['Risk_Pts'], 
+                    'ROE': stock.get('ROE', 'N/A'), 'Margins': stock.get('Margins', 'N/A'), 
+                    'PEG': stock.get('PEG', 'N/A'), 'FCF_Y': stock.get('FCF_Y', 'N/A'), 
+                    'Insiders': stock.get('Insiders', 'N/A'), 'Upside': stock.get('Upside', 'N/A')
                 })
 
 # --- SESSION STATE FOR WATCHLIST ---
@@ -398,14 +447,14 @@ def get_portfolio_data(port_dict):
             'Breakdown': breakdown
         })
 
-    log_scores_to_csv(portfolio_data)
+    # Updated logging call
+    log_scores(portfolio_data)
 
     return portfolio_data, all_histories, total_value
 
 # --- UI HELPER FUNCTION ---
 def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollars=False, score_history=None):
     ticker = stock['Ticker']
-    # Changed from 6 columns to a 2-column layout (Info vs Interactive Chart)
     cols = st.columns([2, 4]) 
     is_search_or_watch = stock['Shares'] == 0 
     
@@ -520,7 +569,6 @@ def draw_stock_row(stock, histories, today_date, is_watchlist=False, hide_dollar
         if len(master_hist) > 20:
             master_hist['BB_Upper'], master_hist['BB_Lower'] = calculate_bbands(master_hist['Close'])
 
-        # --- THE NEW INTERACTIVE CHART ---
         with cols[1]:
             fig = go.Figure()
             
