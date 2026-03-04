@@ -7,7 +7,7 @@ from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
 
-# --- HELPER FUNCTIONS (Same as your app) ---
+# --- HELPER FUNCTIONS ---
 def calculate_rsi(series, period=14):
     delta = series.diff()
     gain = delta.where(delta > 0, 0)
@@ -38,10 +38,37 @@ def run_scan_and_log():
         'SNY', 'SONY', 'RY', 'PLTR', 'UBER', 'CRWD', 'PANW', 'ARM', 'SMCI', 'ALB', 'NFLX', 'CVS', 'HOOD', 'IBM', 'IREN', 'LRCX', 'AMAT', 'XOM', 'LMT', 'ZETA', 'ACHR', 'UNH', 'NKE', 'COIN', 'NVO', 'ANET', 'CRSP', 'CRWV', 'DIS', 'DUK', 'GLXY', 'LULU', 'NBIS', 'NRG', 'SBUX', 'TSLA'
     ]
 
-    portfolio_data = []
-    print(f"Starting scan for {len(global_universe)} stocks...")
+    today_str = datetime.today().strftime('%Y-%m-%d')
+    
+    # 1. CONNECT TO GOOGLE SHEETS FIRST
+    print("Authenticating with Google Sheets to check existing logs...")
+    gcp_json = os.environ.get('GCP_SERVICE_ACCOUNT') 
+    if not gcp_json:
+        print("No Google Credentials found in environment. Exiting.")
+        return
 
-    for ticker in global_universe:
+    skey = json.loads(gcp_json)
+    scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    credentials = Credentials.from_service_account_info(skey, scopes=scopes)
+    gc = gspread.authorize(credentials)
+    
+    sheet = gc.open("Stock_Quant_History").sheet1
+    existing_data = sheet.get_all_records()
+    
+    # 2. DETERMINE WHICH TICKERS ARE MISSING TODAY
+    logged_today = {str(row.get('Ticker', '')) for row in existing_data if str(row.get('Date', '')) == today_str}
+    tickers_to_scan = [t for t in global_universe if t not in logged_today]
+    
+    if not tickers_to_scan:
+        print(f"✅ All {len(global_universe)} tickers have already been logged for {today_str}. Exiting to save API calls.")
+        return
+        
+    print(f"Found {len(logged_today)} tickers already logged today.")
+    print(f"Fetching Yahoo Finance data for the remaining {len(tickers_to_scan)} missing tickers...")
+
+    # 3. ONLY SCAN MISSING TICKERS
+    portfolio_data = []
+    for ticker in tickers_to_scan:
         try:
             stock = yf.Ticker(ticker)
             hist = stock.history(period='2y')
@@ -125,40 +152,21 @@ def run_scan_and_log():
         except Exception as e:
             print(f"Error processing {ticker}: {e}")
 
-    # --- GOOGLE SHEETS UPLOAD ---
-    print("Uploading to Google Sheets...")
-    # NOTE: We use os.environ here instead of st.secrets for GitHub Actions
-    gcp_json = os.environ.get('GCP_SERVICE_ACCOUNT') 
-    if not gcp_json:
-        print("No Google Credentials found in environment. Exiting.")
-        return
-
-    skey = json.loads(gcp_json)
-    scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-    credentials = Credentials.from_service_account_info(skey, scopes=scopes)
-    gc = gspread.authorize(credentials)
-    
-    sheet = gc.open("Stock_Quant_History").sheet1
-    today_str = datetime.today().strftime('%Y-%m-%d')
-    
-    existing_data = sheet.get_all_records()
-    existing_records = set((str(row.get('Date', '')), str(row.get('Ticker', ''))) for row in existing_data)
-    
+    # 4. UPLOAD THE REMAINDER TO GOOGLE SHEETS
     new_rows = []
     for stock in portfolio_data:
-        if (today_str, stock['Ticker']) not in existing_records:
-            new_rows.append([
-                today_str, stock['Ticker'], stock['Price'], stock['Score'], 
-                stock['Decision'], stock['Risk_Pts'], stock['ROE'], 
-                stock['Margins'], stock['PEG'], stock['FCF_Y'],
-                stock['Insiders'], stock['Upside']
-            ])
+        new_rows.append([
+            today_str, stock['Ticker'], stock['Price'], stock['Score'], 
+            stock['Decision'], stock['Risk_Pts'], stock['ROE'], 
+            stock['Margins'], stock['PEG'], stock['FCF_Y'],
+            stock['Insiders'], stock['Upside']
+        ])
             
     if new_rows:
         sheet.append_rows(new_rows)
-        print(f"Successfully added {len(new_rows)} rows to Google Sheets.")
+        print(f"✅ Successfully added {len(new_rows)} rows to Google Sheets.")
     else:
-        print("No new rows to add today.")
+        print("No valid data fetched to append.")
 
 if __name__ == "__main__":
     run_scan_and_log()
