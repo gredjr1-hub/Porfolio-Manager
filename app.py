@@ -115,51 +115,78 @@ def log_scores(portfolio_data):
             
             sheet = gc.open("Stock_Quant_History").sheet1
             existing_data = sheet.get_all_records()
-            existing_records = set((str(row.get('Date', '')), str(row.get('Ticker', ''))) for row in existing_data)
             
+            # --- CHANGE 1: Create a Row Map instead of a simple Set ---
+            # This maps the (Date, Ticker) to its exact row number in Google Sheets
+            # +2 accounts for 0-indexing and the header row
+            row_map = {(str(row.get('Date', '')), str(row.get('Ticker', ''))): i + 2 for i, row in enumerate(existing_data)}
+            
+            cells_to_update = []
             new_rows = []
+            
             for stock in portfolio_data:
                 record_key = (today_str, stock['Ticker'])
-                if record_key not in existing_records:
-                    new_rows.append([
-                        today_str, stock['Ticker'], round(stock['Price'], 2), stock['Score'], 
-                        stock['Decision'], stock['Risk_Pts'], stock.get('ROE', 'N/A'), 
-                        stock.get('Margins', 'N/A'), stock.get('PEG', 'N/A'), stock.get('FCF_Y', 'N/A'),
-                        stock.get('Insiders', 'N/A'), stock.get('Upside', 'N/A')
-                    ])
+                row_data = [
+                    today_str, stock['Ticker'], round(stock['Price'], 2), stock['Score'], 
+                    stock['Decision'], stock['Risk_Pts'], stock.get('ROE', 'N/A'), 
+                    stock.get('Margins', 'N/A'), stock.get('PEG', 'N/A'), stock.get('FCF_Y', 'N/A'),
+                    stock.get('Insiders', 'N/A'), stock.get('Upside', 'N/A')
+                ]
+                
+                # --- CHANGE 2: The Overwrite Logic ---
+                if record_key in row_map:
+                    # If it exists, queue an overwrite for that specific row (Columns A through L)
+                    row_idx = row_map[record_key]
+                    cell_range = f'A{row_idx}:L{row_idx}'
+                    cells_to_update.append({'range': cell_range, 'values': [row_data]})
+                else:
+                    # If it doesn't exist, queue it to be appended
+                    new_rows.append(row_data)
                     
+            # --- CHANGE 3: Execute Batch Updates ---
+            if cells_to_update:
+                sheet.batch_update(cells_to_update)
             if new_rows:
                 sheet.append_rows(new_rows)
             return # Exit function if GSheets succeeds
-    except Exception:
+    except Exception as e:
+        print(f"Google Sheet Log Error: {e}")
         pass # If anything fails, drop down to local CSV fallback
         
-    # 2. Local CSV Fallback
+    # --- CHANGE 4: Upgrade CSV Fallback to support Overwriting ---
     filename = "historical_quant_scores.csv"
     file_exists = os.path.isfile(filename)
-    existing_records = set()
+    fieldnames = ['Date', 'Ticker', 'Price', 'Score', 'Decision', 'Risk_Pts', 'ROE', 'Margins', 'PEG', 'FCF_Y', 'Insiders', 'Upside']
     
+    csv_data_map = {}
+    
+    # Read existing CSV data into a dictionary
     if file_exists:
         try:
             with open(filename, 'r', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
-                for row in reader: existing_records.add((row['Date'], row['Ticker']))
+                for row in reader: 
+                    csv_data_map[(row['Date'], row['Ticker'])] = row
         except Exception: pass
             
-    with open(filename, 'a', newline='', encoding='utf-8') as f:
-        fieldnames = ['Date', 'Ticker', 'Price', 'Score', 'Decision', 'Risk_Pts', 'ROE', 'Margins', 'PEG', 'FCF_Y', 'Insiders', 'Upside']
+    # Update or insert today's fetched data into the dictionary
+    for stock in portfolio_data:
+        record_key = (today_str, stock['Ticker'])
+        csv_data_map[record_key] = {
+            'Date': today_str, 'Ticker': stock['Ticker'], 'Price': round(stock['Price'], 2), 
+            'Score': stock['Score'], 'Decision': stock['Decision'], 'Risk_Pts': stock['Risk_Pts'], 
+            'ROE': stock.get('ROE', 'N/A'), 'Margins': stock.get('Margins', 'N/A'), 
+            'PEG': stock.get('PEG', 'N/A'), 'FCF_Y': stock.get('FCF_Y', 'N/A'), 
+            'Insiders': stock.get('Insiders', 'N/A'), 'Upside': stock.get('Upside', 'N/A')
+        }
+        
+    # Rewrite the entire CSV with the updated/overwritten data
+    with open(filename, 'w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
-        if not file_exists: writer.writeheader()
-        for stock in portfolio_data:
-            if (today_str, stock['Ticker']) not in existing_records:
-                writer.writerow({
-                    'Date': today_str, 'Ticker': stock['Ticker'], 'Price': round(stock['Price'], 2), 
-                    'Score': stock['Score'], 'Decision': stock['Decision'], 'Risk_Pts': stock['Risk_Pts'], 
-                    'ROE': stock.get('ROE', 'N/A'), 'Margins': stock.get('Margins', 'N/A'), 
-                    'PEG': stock.get('PEG', 'N/A'), 'FCF_Y': stock.get('FCF_Y', 'N/A'), 
-                    'Insiders': stock.get('Insiders', 'N/A'), 'Upside': stock.get('Upside', 'N/A')
-                })
-
+        writer.writeheader()
+        for row_dict in csv_data_map.values():
+            writer.writerow(row_dict)
+            
 # --- SESSION STATE FOR WATCHLIST ---
 if 'watchlist' not in st.session_state:
     st.session_state.watchlist = []
