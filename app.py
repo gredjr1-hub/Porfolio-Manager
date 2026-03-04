@@ -838,9 +838,7 @@ with tab_analytics:
             buy_df_all = pd.concat(buy_combined)
             fig_buy = go.Figure()
             
-            # Add trace for each ticker
             for ticker, grp in buy_df_all.groupby('Ticker'):
-                # Green marker if score maintained >= 85, gray if it dropped
                 colors = ['#2ca02c' if s >= 85 else 'gray' for s in grp['Score']]
                 fig_buy.add_trace(go.Scatter(
                     x=grp['Date'], y=grp['Pct_Gain'], 
@@ -852,8 +850,10 @@ with tab_analytics:
                     hoverinfo='text'
                 ))
             
-            # Add Average Line across the cohort
-            avg_buy = buy_df_all.groupby('Date')['Pct_Gain'].mean().reset_index()
+            # THE FIX: Pivot and forward-fill missing days so the average calculation doesn't drop
+            pivot_buy = buy_df_all.pivot_table(index='Date', columns='Ticker', values='Pct_Gain').ffill()
+            avg_buy = pivot_buy.mean(axis=1).reset_index(name='Pct_Gain')
+            
             fig_buy.add_trace(go.Scatter(
                 x=avg_buy['Date'], y=avg_buy['Pct_Gain'],
                 mode='lines', name='Cohort Average',
@@ -899,7 +899,6 @@ with tab_analytics:
             fig_sell = go.Figure()
             
             for ticker, grp in sell_df_all.groupby('Ticker'):
-                # Red marker if score maintained < 40, gray if it recovered
                 colors = ['#d62728' if s < 40 else 'gray' for s in grp['Score']]
                 fig_sell.add_trace(go.Scatter(
                     x=grp['Date'], y=grp['Pct_Gain'], 
@@ -911,7 +910,10 @@ with tab_analytics:
                     hoverinfo='text'
                 ))
             
-            avg_sell = sell_df_all.groupby('Date')['Pct_Gain'].mean().reset_index()
+            # THE FIX: Pivot and forward-fill missing days so the average calculation doesn't drop
+            pivot_sell = sell_df_all.pivot_table(index='Date', columns='Ticker', values='Pct_Gain').ffill()
+            avg_sell = pivot_sell.mean(axis=1).reset_index(name='Pct_Gain')
+            
             fig_sell.add_trace(go.Scatter(
                 x=avg_sell['Date'], y=avg_sell['Pct_Gain'],
                 mode='lines', name='Cohort Average',
