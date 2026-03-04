@@ -624,156 +624,311 @@ today = pd.Timestamp.today().tz_localize(None)
 
 global_scores_df = load_score_history()
 
-st.markdown("### 🔍 Stock Research Station")
-search_query = st.text_input("Enter Ticker Symbol (e.g. MSFT, BMNR, QS):", "").strip().upper()
+# Setup Tabs for cleaner UI
+tab_main, tab_analytics = st.tabs(["💻 Command Center", "📊 Performance Analytics"])
 
-if search_query:
-    with st.spinner(f"Running algorithmic analysis on {search_query}..."):
-        search_data, search_hist, _ = get_portfolio_data({search_query: {'shares': 0, 'avg_price': 0, 'pct_acct': 0, 'gl_pct': 0}})
-        if search_data and search_data[0]['Price'] > 0:
-            col1, col2 = st.columns([8, 1])
-            with col2:
-                if search_query not in st.session_state.watchlist:
-                    if st.button("⭐ Watch", key="add_watch"):
-                        st.session_state.watchlist.append(search_query)
-                        st.rerun()
-                else: st.button("✅ Added", disabled=True)
-            draw_stock_row(search_data[0], search_hist, today, hide_dollars=hide_dollars, score_history=global_scores_df)
-        else:
-            st.warning(f"Could not find valid market data for '{search_query}'.")
-st.divider()
+# -------------------------------
+# TAB 1: COMMAND CENTER
+# -------------------------------
+with tab_main:
+    st.markdown("### 🔍 Stock Research Station")
+    search_query = st.text_input("Enter Ticker Symbol (e.g. MSFT, BMNR, QS):", "").strip().upper()
 
-if st.session_state.watchlist:
-    st.markdown("### ⭐ My Watchlist")
-    watch_dict = {ticker: {} for ticker in st.session_state.watchlist}
-    with st.spinner("Updating Watchlist algorithms..."):
-        watch_data, watch_hist, _ = get_portfolio_data(watch_dict)
-    for stock in watch_data: draw_stock_row(stock, watch_hist, today, is_watchlist=True, hide_dollars=hide_dollars, score_history=global_scores_df)
-
-st.markdown("### 🏆 Top 10 Market Scanner")
-st.markdown("Live scan of a curated universe of global megacap and hyper-growth stocks to find the best immediate setups.")
-
-global_universe = [
-    'AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'META', 'TSM', 'AVGO', 'NVO', 'JPM', 
-    'WMT', 'LLY', 'V', 'PG', 'MA', 'JNJ', 'ASML', 'HD', 'ORCL', 'COST', 
-    'CVX', 'BABA', 'CRM', 'AMD', 'BAC', 'PEP', 'LIN', 'KO', 'ADBE', 'DIS', 
-    'CSCO', 'TM', 'INTC', 'VZ', 'PFE', 'NKE', 'SHEL', 'AZN', 'NVS', 'SAP', 
-    'SNY', 'SONY', 'RY', 'PLTR', 'UBER', 'CRWD', 'PANW', 'ARM', 'SMCI', 'ALB', 'NFLX', 'CVS', 'HOOD', 'IBM', 'IREN', 'LRCX', 'AMAT', 'XOM', 'LMT', 'ZETA', 'ACHR', 'UNH', 'NKE', 'COIN', 'NVO', 'ANET', 'CRSP', 'CRWV', 'DIS', 'DUK', 'GLXY', 'LULU', 'NBIS', 'NRG', 'SBUX', 'TSLA'
-]
-
-if st.checkbox("Run Market Scan (Takes ~20 seconds to load)"):
-    scan_dict = {ticker: {} for ticker in global_universe}
-    with st.spinner("Scanning 50 global assets... (Cached after first run)"):
-        market_data, market_hist, _ = get_portfolio_data(scan_dict)
-        
-    if market_data:
-        df_market = pd.DataFrame(market_data)
-        df_market['Upside_Safe'] = pd.to_numeric(df_market['Upside'], errors='coerce').fillna(0)
-        df_top10 = df_market.sort_values(by=['Score', 'Upside_Safe'], ascending=[False, False]).head(10)
-        
-        export_cols = ['Ticker', 'Price', 'Score', 'Decision', 'Risk', 'Sector', 'ROE', 'Margins', 'PEG', 'Insiders', 'Upside', 'FCF_Y', 'RSI', 'PC_Ratio']
-        df_export = df_top10[export_cols].copy()
-        
-        csv_data = df_export.to_csv(index=False).encode('utf-8')
-        
-        col_space, col_btn = st.columns([8, 2])
-        with col_btn:
-            st.download_button(
-                label="💾 Export Top 10 to CSV",
-                data=csv_data,
-                file_name=f"Quant_Top10_Scan_{today.strftime('%Y-%m-%d')}.csv",
-                mime="text/csv"
-            )
-        
-        for idx, row in df_top10.iterrows():
-            draw_stock_row(row.to_dict(), market_hist, today, hide_dollars=hide_dollars, score_history=global_scores_df)
-st.divider()
-
-if portfolio:
-    with st.spinner("Crunching data from the market..."):
-        data, histories, total_val = get_portfolio_data(portfolio)
-
-    if data:
-        total_val_str = "$••••" if hide_dollars else f"${total_val:,.2f}"
-        
-        col_title, col_export = st.columns([8, 2])
-        with col_title:
-            st.subheader(f"Total Live Portfolio Value: {total_val_str}")
-            
-        with col_export:
-            df_port = pd.DataFrame(data)
-            port_cols = ['Ticker', 'Shares', 'Avg', 'Price', 'Score', 'Decision', 'Risk', 'Sector', 'ROE', 'PEG', 'Insiders', 'Upside']
-            csv_port = df_port[port_cols].to_csv(index=False).encode('utf-8')
-            st.download_button("💾 Export Portfolio Grades", data=csv_port, file_name=f"My_Portfolio_Grades_{today.strftime('%Y-%m-%d')}.csv", mime="text/csv")
-            
-        st.markdown("### 🩺 Portfolio Health & Diversification")
-        
-        df_metrics = pd.DataFrame(data)
-        
-        df_metrics['Weight'] = 0.0 
-        
-        if total_val > 0:
-            df_metrics['Weight'] = df_metrics['Val'] / total_val
-            weighted_score = (df_metrics['Score'] * df_metrics['Weight']).sum()
-            avg_risk = (df_metrics['Risk_Pts'] * df_metrics['Weight']).sum()
-        else:
-            weighted_score, avg_risk = 50, 0
-            
-        health_color = "normal" if weighted_score >= 50 else "inverse"
-        overall_health = "Excellent" if weighted_score >= 65 else "Good" if weighted_score >= 50 else "Warning"
-        
-        sector_weights = df_metrics.groupby('Sector')['Weight'].sum() * 100
-        
-        df_metrics['Is_Domestic'] = df_metrics['Country'] == 'United States'
-        dom_weight = df_metrics[df_metrics['Is_Domestic']]['Weight'].sum() * 100
-        intl_weight = df_metrics[~df_metrics['Is_Domestic']]['Weight'].sum() * 100
-        
-        h_cols = st.columns([0.8, .8, 1.3, 1.3])
-        
-        with h_cols[0]:
-            st.metric(label="Overall Health Status", value=overall_health, delta=f"Quant Score: {weighted_score:.1f}/100", delta_color=health_color)
-            r_str = "High ⚠️" if avg_risk >= 2 else "Low 🛡️" if avg_risk <= 0 else "Moderate ⚖️"
-            st.metric(label="Aggregated Portfolio Risk", value=r_str)
-            
-        with h_cols[1]:
-            st.markdown("**Suggestions & Warnings:**")
-            suggestions = []
-            
-            max_pos = df_metrics.loc[df_metrics['Weight'].idxmax()]
-            if max_pos['Weight'] > 0.20:
-                suggestions.append(f"⚠️ **Concentration:** {max_pos['Ticker']} makes up {max_pos['Weight']*100:.1f}% of your portfolio.")
-            
-            if not sector_weights.empty:
-                max_sector = sector_weights.idxmax()
-                if sector_weights[max_sector] > 40:
-                    suggestions.append(f"⚠️ **Sector Risk:** You are heavily overweight in **{max_sector}** ({sector_weights[max_sector]:.1f}%).")
-                    
-            if intl_weight < 10:
-                suggestions.append(f"🌍 **Geo Risk:** Severe home-country bias. You have only {intl_weight:.1f}% international exposure.")
-            elif intl_weight > 50:
-                suggestions.append(f"🌍 **Geo Risk:** High international exposure ({intl_weight:.1f}%) introduces significant FX currency risk.")
-                    
-            sell_candidates = df_metrics[df_metrics['Score'] < 40]
-            if not sell_candidates.empty:
-                tickers_str = ", ".join(sell_candidates['Ticker'].tolist())
-                suggestions.append(f"💡 **Action Needed:** Algorithm flagged {tickers_str} as TRIM or SELL.")
-                
-            if not suggestions: st.success("✅ Well-diversified and balanced. No structural warnings.")
+    if search_query:
+        with st.spinner(f"Running algorithmic analysis on {search_query}..."):
+            search_data, search_hist, _ = get_portfolio_data({search_query: {'shares': 0, 'avg_price': 0, 'pct_acct': 0, 'gl_pct': 0}})
+            if search_data and search_data[0]['Price'] > 0:
+                col1, col2 = st.columns([8, 1])
+                with col2:
+                    if search_query not in st.session_state.watchlist:
+                        if st.button("⭐ Watch", key="add_watch"):
+                            st.session_state.watchlist.append(search_query)
+                            st.rerun()
+                    else: st.button("✅ Added", disabled=True)
+                draw_stock_row(search_data[0], search_hist, today, hide_dollars=hide_dollars, score_history=global_scores_df)
             else:
-                for sug in suggestions: st.info(sug)
+                st.warning(f"Could not find valid market data for '{search_query}'.")
+    st.divider()
+
+    if st.session_state.watchlist:
+        st.markdown("### ⭐ My Watchlist")
+        watch_dict = {ticker: {} for ticker in st.session_state.watchlist}
+        with st.spinner("Updating Watchlist algorithms..."):
+            watch_data, watch_hist, _ = get_portfolio_data(watch_dict)
+        for stock in watch_data: draw_stock_row(stock, watch_hist, today, is_watchlist=True, hide_dollars=hide_dollars, score_history=global_scores_df)
+
+    st.markdown("### 🏆 Top & Bottom Market Scanner")
+    st.markdown("Live scan of a curated universe of global megacap and hyper-growth stocks to find the best (and worst) immediate setups.")
+
+    global_universe = [
+        'AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'META', 'TSM', 'AVGO', 'NVO', 'JPM', 
+        'WMT', 'LLY', 'V', 'PG', 'MA', 'JNJ', 'ASML', 'HD', 'ORCL', 'COST', 
+        'CVX', 'BABA', 'CRM', 'AMD', 'BAC', 'PEP', 'LIN', 'KO', 'ADBE', 'DIS', 
+        'CSCO', 'TM', 'INTC', 'VZ', 'PFE', 'NKE', 'SHEL', 'AZN', 'NVS', 'SAP', 
+        'SNY', 'SONY', 'RY', 'PLTR', 'UBER', 'CRWD', 'PANW', 'ARM', 'SMCI', 'ALB', 'NFLX', 'CVS', 'HOOD', 'IBM', 'IREN', 'LRCX', 'AMAT', 'XOM', 'LMT', 'ZETA', 'ACHR', 'UNH', 'NKE', 'COIN', 'NVO', 'ANET', 'CRSP', 'CRWV', 'DIS', 'DUK', 'GLXY', 'LULU', 'NBIS', 'NRG', 'SBUX', 'TSLA'
+    ]
+
+    if st.checkbox("Run Market Scan (Takes ~20 seconds to load)"):
+        scan_dict = {ticker: {} for ticker in global_universe}
+        with st.spinner("Scanning global assets... (Cached after first run)"):
+            market_data, market_hist, _ = get_portfolio_data(scan_dict)
+            
+        if market_data:
+            df_market = pd.DataFrame(market_data)
+            df_market['Upside_Safe'] = pd.to_numeric(df_market['Upside'], errors='coerce').fillna(0)
+            
+            # Sort by top score and upside
+            df_sorted = df_market.sort_values(by=['Score', 'Upside_Safe'], ascending=[False, False])
+            
+            # Extract Top 5 and Bottom 5
+            df_top5 = df_sorted.head(5)
+            df_bottom5 = df_sorted.tail(5)
+            df_combined = pd.concat([df_top5, df_bottom5]).drop_duplicates(subset=['Ticker'])
+            
+            export_cols = ['Ticker', 'Price', 'Score', 'Decision', 'Risk', 'Sector', 'ROE', 'Margins', 'PEG', 'Insiders', 'Upside', 'FCF_Y', 'RSI', 'PC_Ratio']
+            df_export = df_combined[export_cols].copy()
+            
+            csv_data = df_export.to_csv(index=False).encode('utf-8')
+            
+            col_space, col_btn = st.columns([8, 2])
+            with col_btn:
+                st.download_button(
+                    label="💾 Export Scanned Setups",
+                    data=csv_data,
+                    file_name=f"Quant_Scan_{today.strftime('%Y-%m-%d')}.csv",
+                    mime="text/csv"
+                )
+            
+            st.markdown("#### 🔥 Top 5 Best Setups")
+            for idx, row in df_top5.iterrows():
+                draw_stock_row(row.to_dict(), market_hist, today, hide_dollars=hide_dollars, score_history=global_scores_df)
                 
-        with h_cols[2]:
-            fig_sector = go.Figure(data=[go.Pie(labels=sector_weights.index, values=sector_weights.values, hole=.5, textinfo='label+percent')])
-            fig_sector.update_layout(title_text="Sector Diversification", margin=dict(t=30, b=0, l=0, r=0), height=250)
-            st.plotly_chart(fig_sector, use_container_width=True)
+            st.markdown("#### 🧊 Bottom 5 Worst Setups")
+            for idx, row in df_bottom5.iterrows():
+                draw_stock_row(row.to_dict(), market_hist, today, hide_dollars=hide_dollars, score_history=global_scores_df)
+    st.divider()
 
-        with h_cols[3]:
-            geo_labels = ['Domestic (US)', 'International']
-            geo_vals = [dom_weight, intl_weight]
-            fig_geo = go.Figure(data=[go.Pie(labels=geo_labels, values=geo_vals, hole=.5, textinfo='label+percent', marker=dict(colors=['#1f77b4', '#ff7f0e']))])
-            fig_geo.update_layout(title_text="Geographic Exposure", margin=dict(t=30, b=0, l=0, r=0), height=250)
-            st.plotly_chart(fig_geo, use_container_width=True)
+    if portfolio:
+        with st.spinner("Crunching data from the market..."):
+            data, histories, total_val = get_portfolio_data(portfolio)
 
+        if data:
+            total_val_str = "$••••" if hide_dollars else f"${total_val:,.2f}"
+            
+            col_title, col_export = st.columns([8, 2])
+            with col_title:
+                st.subheader(f"Total Live Portfolio Value: {total_val_str}")
+                
+            with col_export:
+                df_port = pd.DataFrame(data)
+                port_cols = ['Ticker', 'Shares', 'Avg', 'Price', 'Score', 'Decision', 'Risk', 'Sector', 'ROE', 'PEG', 'Insiders', 'Upside']
+                csv_port = df_port[port_cols].to_csv(index=False).encode('utf-8')
+                st.download_button("💾 Export Portfolio Grades", data=csv_port, file_name=f"My_Portfolio_Grades_{today.strftime('%Y-%m-%d')}.csv", mime="text/csv")
+                
+            st.markdown("### 🩺 Portfolio Health & Diversification")
+            
+            df_metrics = pd.DataFrame(data)
+            df_metrics['Weight'] = 0.0 
+            
+            if total_val > 0:
+                df_metrics['Weight'] = df_metrics['Val'] / total_val
+                weighted_score = (df_metrics['Score'] * df_metrics['Weight']).sum()
+                avg_risk = (df_metrics['Risk_Pts'] * df_metrics['Weight']).sum()
+            else:
+                weighted_score, avg_risk = 50, 0
+                
+            health_color = "normal" if weighted_score >= 50 else "inverse"
+            overall_health = "Excellent" if weighted_score >= 65 else "Good" if weighted_score >= 50 else "Warning"
+            
+            sector_weights = df_metrics.groupby('Sector')['Weight'].sum() * 100
+            
+            df_metrics['Is_Domestic'] = df_metrics['Country'] == 'United States'
+            dom_weight = df_metrics[df_metrics['Is_Domestic']]['Weight'].sum() * 100
+            intl_weight = df_metrics[~df_metrics['Is_Domestic']]['Weight'].sum() * 100
+            
+            h_cols = st.columns([0.8, .8, 1.3, 1.3])
+            
+            with h_cols[0]:
+                st.metric(label="Overall Health Status", value=overall_health, delta=f"Quant Score: {weighted_score:.1f}/100", delta_color=health_color)
+                r_str = "High ⚠️" if avg_risk >= 2 else "Low 🛡️" if avg_risk <= 0 else "Moderate ⚖️"
+                st.metric(label="Aggregated Portfolio Risk", value=r_str)
+                
+            with h_cols[1]:
+                st.markdown("**Suggestions & Warnings:**")
+                suggestions = []
+                
+                max_pos = df_metrics.loc[df_metrics['Weight'].idxmax()]
+                if max_pos['Weight'] > 0.20:
+                    suggestions.append(f"⚠️ **Concentration:** {max_pos['Ticker']} makes up {max_pos['Weight']*100:.1f}% of your portfolio.")
+                
+                if not sector_weights.empty:
+                    max_sector = sector_weights.idxmax()
+                    if sector_weights[max_sector] > 40:
+                        suggestions.append(f"⚠️ **Sector Risk:** You are heavily overweight in **{max_sector}** ({sector_weights[max_sector]:.1f}%).")
+                        
+                if intl_weight < 10:
+                    suggestions.append(f"🌍 **Geo Risk:** Severe home-country bias. You have only {intl_weight:.1f}% international exposure.")
+                elif intl_weight > 50:
+                    suggestions.append(f"🌍 **Geo Risk:** High international exposure ({intl_weight:.1f}%) introduces significant FX currency risk.")
+                        
+                sell_candidates = df_metrics[df_metrics['Score'] < 40]
+                if not sell_candidates.empty:
+                    tickers_str = ", ".join(sell_candidates['Ticker'].tolist())
+                    suggestions.append(f"💡 **Action Needed:** Algorithm flagged {tickers_str} as TRIM or SELL.")
+                    
+                if not suggestions: st.success("✅ Well-diversified and balanced. No structural warnings.")
+                else:
+                    for sug in suggestions: st.info(sug)
+                    
+            with h_cols[2]:
+                fig_sector = go.Figure(data=[go.Pie(labels=sector_weights.index, values=sector_weights.values, hole=.5, textinfo='label+percent')])
+                fig_sector.update_layout(title_text="Sector Diversification", margin=dict(t=30, b=0, l=0, r=0), height=250)
+                st.plotly_chart(fig_sector, use_container_width=True)
+
+            with h_cols[3]:
+                geo_labels = ['Domestic (US)', 'International']
+                geo_vals = [dom_weight, intl_weight]
+                fig_geo = go.Figure(data=[go.Pie(labels=geo_labels, values=geo_vals, hole=.5, textinfo='label+percent', marker=dict(colors=['#1f77b4', '#ff7f0e']))])
+                fig_geo.update_layout(title_text="Geographic Exposure", margin=dict(t=30, b=0, l=0, r=0), height=250)
+                st.plotly_chart(fig_geo, use_container_width=True)
+
+            st.divider()
+            st.markdown("### 🎯 Algorithmic Asset Analysis")
+            for stock in data: draw_stock_row(stock, histories, today, hide_dollars=hide_dollars, score_history=global_scores_df)
+
+
+# -------------------------------
+# TAB 2: PERFORMANCE ANALYTICS
+# -------------------------------
+with tab_analytics:
+    st.markdown("### 📈 Forward Strategy Performance")
+    st.markdown("Tracking normalized percentage gain/loss of tickers starting the **day after** they trigger a primary signal (Buy ≥ 85, Sell < 40).")
+    
+    if global_scores_df is not None and not global_scores_df.empty:
+        df_hist = global_scores_df.copy()
+        
+        # Ensure correct datatypes
+        df_hist['Date'] = pd.to_datetime(df_hist['Date'])
+        df_hist['Price'] = pd.to_numeric(df_hist['Price'], errors='coerce')
+        df_hist['Score'] = pd.to_numeric(df_hist['Score'], errors='coerce')
+        df_hist = df_hist.dropna(subset=['Date', 'Price', 'Score']).sort_values('Date')
+        
+        # ----------------------------------------
+        # CHART 1: 85+ RATING (BUY) FORWARD RETURN
+        # ----------------------------------------
+        buy_combined = []
+        for ticker, group in df_hist.groupby('Ticker'):
+            group = group.sort_values('Date').reset_index(drop=True)
+            idx_85 = group.index[group['Score'] >= 85].tolist()
+            
+            if not idx_85: continue
+            
+            first_85 = idx_85[0]
+            # Must have data the day *after* to start tracking
+            if first_85 + 1 < len(group):
+                start_idx = first_85 + 1
+                start_price = group.loc[start_idx, 'Price']
+                
+                if start_price > 0:
+                    track_df = group.loc[start_idx:].copy()
+                    track_df['Pct_Gain'] = ((track_df['Price'] - start_price) / start_price) * 100
+                    buy_combined.append(track_df)
+        
+        if buy_combined:
+            buy_df_all = pd.concat(buy_combined)
+            fig_buy = go.Figure()
+            
+            # Add trace for each ticker
+            for ticker, grp in buy_df_all.groupby('Ticker'):
+                # Green marker if score maintained >= 85, gray if it dropped
+                colors = ['#2ca02c' if s >= 85 else 'gray' for s in grp['Score']]
+                fig_buy.add_trace(go.Scatter(
+                    x=grp['Date'], y=grp['Pct_Gain'], 
+                    mode='lines+markers', 
+                    name=ticker,
+                    line=dict(width=1, color='rgba(150,150,150,0.4)'),
+                    marker=dict(color=colors, size=6),
+                    text=[f"<b>{ticker}</b><br>Score: {s}<br>Gain: {g:.2f}%" for s, g in zip(grp['Score'], grp['Pct_Gain'])],
+                    hoverinfo='text'
+                ))
+            
+            # Add Average Line across the cohort
+            avg_buy = buy_df_all.groupby('Date')['Pct_Gain'].mean().reset_index()
+            fig_buy.add_trace(go.Scatter(
+                x=avg_buy['Date'], y=avg_buy['Pct_Gain'],
+                mode='lines', name='Cohort Average',
+                line=dict(color='yellow', width=3, dash='dash')
+            ))
+            
+            fig_buy.update_layout(
+                title="85+ Score (Buy) - Percentage Gain Over Time",
+                yaxis_title="Percentage Gain/Loss (%)",
+                xaxis_title="Date",
+                hovermode='x unified',
+                showlegend=False,
+                height=500
+            )
+            st.plotly_chart(fig_buy, use_container_width=True)
+        else:
+            st.info("No tickers found with an 85+ score and subsequent price data yet.")
+            
         st.divider()
-        st.markdown("### 🎯 Algorithmic Asset Analysis")
-        for stock in data: draw_stock_row(stock, histories, today, hide_dollars=hide_dollars, score_history=global_scores_df)
+
+        # ----------------------------------------
+        # CHART 2: <40 RATING (SELL) FORWARD RETURN
+        # ----------------------------------------
+        sell_combined = []
+        for ticker, group in df_hist.groupby('Ticker'):
+            group = group.sort_values('Date').reset_index(drop=True)
+            idx_sell = group.index[group['Score'] < 40].tolist()
+            
+            if not idx_sell: continue
+            
+            first_sell = idx_sell[0]
+            if first_sell + 1 < len(group):
+                start_idx = first_sell + 1
+                start_price = group.loc[start_idx, 'Price']
+                
+                if start_price > 0:
+                    track_df = group.loc[start_idx:].copy()
+                    track_df['Pct_Gain'] = ((track_df['Price'] - start_price) / start_price) * 100
+                    sell_combined.append(track_df)
+        
+        if sell_combined:
+            sell_df_all = pd.concat(sell_combined)
+            fig_sell = go.Figure()
+            
+            for ticker, grp in sell_df_all.groupby('Ticker'):
+                # Red marker if score maintained < 40, gray if it recovered
+                colors = ['#d62728' if s < 40 else 'gray' for s in grp['Score']]
+                fig_sell.add_trace(go.Scatter(
+                    x=grp['Date'], y=grp['Pct_Gain'], 
+                    mode='lines+markers', 
+                    name=ticker,
+                    line=dict(width=1, color='rgba(150,150,150,0.4)'),
+                    marker=dict(color=colors, size=6),
+                    text=[f"<b>{ticker}</b><br>Score: {s}<br>Gain: {g:.2f}%" for s, g in zip(grp['Score'], grp['Pct_Gain'])],
+                    hoverinfo='text'
+                ))
+            
+            avg_sell = sell_df_all.groupby('Date')['Pct_Gain'].mean().reset_index()
+            fig_sell.add_trace(go.Scatter(
+                x=avg_sell['Date'], y=avg_sell['Pct_Gain'],
+                mode='lines', name='Cohort Average',
+                line=dict(color='yellow', width=3, dash='dash')
+            ))
+            
+            fig_sell.update_layout(
+                title="<40 Score (Sell) - Percentage Gain Over Time",
+                yaxis_title="Percentage Gain/Loss (%)",
+                xaxis_title="Date",
+                hovermode='x unified',
+                showlegend=False,
+                height=500
+            )
+            st.plotly_chart(fig_sell, use_container_width=True)
+        else:
+            st.info("No tickers found with a <40 score and subsequent price data yet.")
+
+    else:
+        st.warning("Insufficient historical data found to generate performance charts.")
