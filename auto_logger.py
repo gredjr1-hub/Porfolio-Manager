@@ -40,8 +40,8 @@ def run_scan_and_log():
 
     today_str = datetime.today().strftime('%Y-%m-%d')
     
-    # 1. CONNECT TO GOOGLE SHEETS FIRST
-    print("Authenticating with Google Sheets to check existing logs...")
+    # 1. CONNECT TO GOOGLE SHEETS
+    print("Authenticating with Google Sheets to prepare for End-of-Day logging...")
     gcp_json = os.environ.get('GCP_SERVICE_ACCOUNT') 
     if not gcp_json:
         print("No Google Credentials found in environment. Exiting.")
@@ -55,20 +55,15 @@ def run_scan_and_log():
     sheet = gc.open("Stock_Quant_History").sheet1
     existing_data = sheet.get_all_records()
     
-    # 2. DETERMINE WHICH TICKERS ARE MISSING TODAY
-    logged_today = {str(row.get('Ticker', '')) for row in existing_data if str(row.get('Date', '')) == today_str}
-    tickers_to_scan = [t for t in global_universe if t not in logged_today]
+    # --- CHANGE 1: Build the Row Map (No longer skipping tickers!) ---
+    # We map out where today's existing entries live so we can overwrite them.
+    row_map = {(str(row.get('Date', '')), str(row.get('Ticker', ''))): i + 2 for i, row in enumerate(existing_data)}
     
-    if not tickers_to_scan:
-        print(f"✅ All {len(global_universe)} tickers have already been logged for {today_str}. Exiting to save API calls.")
-        return
-        
-    print(f"Found {len(logged_today)} tickers already logged today.")
-    print(f"Fetching Yahoo Finance data for the remaining {len(tickers_to_scan)} missing tickers...")
+    print(f"Fetching fresh End-of-Day Yahoo Finance data for all {len(global_universe)} tickers...")
 
-    # 3. ONLY SCAN MISSING TICKERS
+    # 2. SCAN ALL TICKERS (Fetching fresh closing data for everything)
     portfolio_data = []
-    for ticker in tickers_to_scan:
+    for ticker in global_universe:
         try:
             stock = yf.Ticker(ticker)
             hist = stock.history(period='2y')
@@ -152,6 +147,37 @@ def run_scan_and_log():
         except Exception as e:
             print(f"Error processing {ticker}: {e}")
 
+    # --- CHANGE 2: UPSERT LOGIC (Overwrite existing, append missing) ---
+    cells_to_update = []
+    new_rows = []
+    
+    for stock in portfolio_data:
+        record_key = (today_str, stock['Ticker'])
+        row_data = [
+            today_str, stock['Ticker'], stock['Price'], stock['Score'], 
+            stock['Decision'], stock['Risk_Pts'], stock['ROE'], 
+            stock['Margins'], stock['PEG'], stock['FCF_Y'],
+            stock['Insiders'], stock['Upside']
+        ]
+        
+        if record_key in row_map:
+            # It was logged earlier today, queue an overwrite
+            row_idx = row_map[record_key]
+            cell_range = f'A{row_idx}:L{row_idx}'
+            cells_to_update.append({'range': cell_range, 'values': [row_data]})
+        else:
+            # Not seen yet today, append it to the bottom
+            new_rows.append(row_data)
+            
+    # Execute all updates in bulk to save API limits
+    if cells_to_update:
+        sheet.batch_update(cells_to_update)
+        print(f"✅ Successfully updated/overwritten {len(cells_to_update)} existing rows with EOD data.")
+        
+    if new_rows:
+        sheet.append_rows(new_rows)
+        print(f"✅ Successfully appended {len(new_rows)} new rows.")
+        
     # 4. UPLOAD THE REMAINDER TO GOOGLE SHEETS
     new_rows = []
     for stock in portfolio_data:
