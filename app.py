@@ -9,7 +9,10 @@ from datetime import timedelta
 import base64
 import os
 import csv
+import logging
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 # --- SESSION STATE FOR AUDIO ---
 if 'startup_sound_played' not in st.session_state:
@@ -42,16 +45,19 @@ def load_score_history():
                 df = pd.DataFrame(data)
                 df['Date'] = pd.to_datetime(df['Date']).dt.tz_localize(None)
                 return df
-    except Exception:
-        pass # Fail silently and fallback to local CSV
+    except Exception as e:
+        logger.warning("load_score_history: Google Sheets failed: %s", e)
+        st.warning(f"Could not load score history from Google Sheets: {e}. Falling back to local CSV.")
 
     if os.path.exists("historical_quant_scores.csv"):
         try:
             df = pd.read_csv("historical_quant_scores.csv")
             df['Date'] = pd.to_datetime(df['Date']).dt.tz_localize(None)
             return df
-        except Exception: pass
-        
+        except Exception as e:
+            logger.warning("load_score_history: CSV fallback failed: %s", e)
+            st.warning(f"Could not load local score history CSV: {e}")
+
     return pd.DataFrame()
 
 # --- ALGORITHMIC HELPER FUNCTIONS ---
@@ -93,6 +99,72 @@ def play_startup_sound():
             """
             st.markdown(audio_html, unsafe_allow_html=True)
             st.session_state.startup_sound_played = True
+
+# --- SCORING CONFIG (single source of truth for all algorithm thresholds/points) ---
+SCORING_CONFIG = {
+    "base_score": 50,
+    # ROE
+    "roe_good_threshold": 0.20,
+    "roe_good_pts": 5,
+    "roe_bad_threshold": 0.05,
+    "roe_bad_pts": -7,
+    "roe_bad_risk": 1,
+    # Gross Margins
+    "margins_good_threshold": 0.50,
+    "margins_good_pts": 4,
+    "margins_bad_threshold": 0.10,
+    "margins_bad_pts": -4,
+    # PEG
+    "peg_good_threshold": 0.9,
+    "peg_good_pts": 5,
+    "peg_bad_threshold": 2.5,
+    "peg_bad_pts": -7,
+    "peg_bad_risk": 1,
+    # P/E
+    "pe_expand_pts": 5,
+    "pe_contract_multiplier": 1.2,
+    "pe_contract_pts": -5,
+    "pe_extreme_threshold": 50,
+    "pe_extreme_risk": 1,
+    # FCF Yield
+    "fcf_good_threshold": 6.0,
+    "fcf_good_pts": 5,
+    "fcf_bad_pts": -5,
+    "fcf_bad_risk": 1,
+    # Analyst Upside
+    "analyst_upside_good_threshold": 25,
+    "analyst_upside_good_pts": 10,
+    "analyst_upside_bad_pts": -10,
+    # Insider Ownership
+    "insiders_high_threshold": 0.15,
+    "insiders_high_pts": 10,
+    "insiders_mid_threshold": 0.05,
+    "insiders_mid_pts": 5,
+    # RSI
+    "rsi_oversold_threshold": 30,
+    "rsi_oversold_pts": 10,
+    "rsi_overbought_threshold": 65,
+    "rsi_overbought_pts": -10,
+    # MACD
+    "macd_bull_pts": 5,
+    "macd_bear_pts": -5,
+    # Bollinger Bands
+    "bb_below_pts": 8,
+    "bb_above_pts": -8,
+    # Volume Surge
+    "vol_surge_multiplier": 1.5,
+    "vol_surge_bull_pts": 5,
+    # Put/Call Ratio
+    "pc_bull_threshold": 0.6,
+    "pc_bull_pts": 5,
+    "pc_bear_threshold": 1.3,
+    "pc_bear_pts": -5,
+    # Volatility
+    "vol_high_threshold": 60,
+    "vol_high_risk": 2,
+    "vol_low_threshold": 20,
+    "vol_low_risk": -1,
+}
 
 # --- FORWARD LOGGING DATABASE ---
 def log_scores(portfolio_data):
@@ -150,8 +222,8 @@ def log_scores(portfolio_data):
                 sheet.append_rows(new_rows)
             return # Exit function if GSheets succeeds
     except Exception as e:
-        print(f"Google Sheet Log Error: {e}")
-        pass # If anything fails, drop down to local CSV fallback
+        logger.warning("log_scores: Google Sheets failed: %s", e)
+        st.warning(f"Could not log scores to Google Sheets: {e}. Falling back to local CSV.")
         
     # --- CHANGE 4: Upgrade CSV Fallback to support Overwriting ---
     filename = "historical_quant_scores.csv"
@@ -181,11 +253,15 @@ def log_scores(portfolio_data):
         }
         
     # Rewrite the entire CSV with the updated/overwritten data
-    with open(filename, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        for row_dict in csv_data_map.values():
-            writer.writerow(row_dict)
+    try:
+        with open(filename, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            for row_dict in csv_data_map.values():
+                writer.writerow(row_dict)
+    except Exception as e:
+        logger.warning("log_scores: CSV write failed: %s", e)
+        st.error(f"Both Google Sheets and local CSV logging failed. Scores were not saved. Error: {e}")
             
 # --- SESSION STATE FOR WATCHLIST ---
 if 'watchlist' not in st.session_state:
@@ -325,7 +401,7 @@ def get_portfolio_data(port_dict):
                 bb_upper, bb_lower = upper_b.iloc[-1], lower_b.iloc[-1]
                 
                 avg_vol = hist['Volume'].tail(50).mean()
-                if hist['Volume'].iloc[-1] > (avg_vol * 1.5): vol_surge = True
+                if hist['Volume'].iloc[-1] > (avg_vol * SCORING_CONFIG["vol_surge_multiplier"]): vol_surge = True
         
         pc_ratio = 'N/A'
         try:
@@ -337,114 +413,115 @@ def get_portfolio_data(port_dict):
         except: pass
 
         # --- THE ALGORITHM ---
-        score = 50 
+        sc = SCORING_CONFIG
+        score = sc["base_score"]
         risk_points = 0
-        breakdown = ["**Base Score:** 50 pts"]
-        
+        breakdown = [f"**Base Score:** {sc['base_score']} pts"]
+
         if isinstance(roe, (float, int)):
-            if roe >= 0.2: 
-                score += 5
-                breakdown.append(f"✅ **ROE > 20%:** +5 pts (Strong Capital Efficiency)")
-            elif roe < 0.05: 
-                score -= 7; risk_points += 1
-                breakdown.append(f"❌ **ROE < 5%:** -7 pts (Poor Capital Efficiency) [+1 Risk]")
-                
+            if roe >= sc["roe_good_threshold"]:
+                score += sc["roe_good_pts"]
+                breakdown.append(f"✅ **ROE > 20%:** +{sc['roe_good_pts']} pts (Strong Capital Efficiency)")
+            elif roe < sc["roe_bad_threshold"]:
+                score += sc["roe_bad_pts"]; risk_points += sc["roe_bad_risk"]
+                breakdown.append(f"❌ **ROE < 5%:** {sc['roe_bad_pts']} pts (Poor Capital Efficiency) [+{sc['roe_bad_risk']} Risk]")
+
         if isinstance(margins, (float, int)):
-            if margins >= 0.5:
-                score += 4
-                breakdown.append(f"✅ **Gross Margins > 50%:** +4 pts (High Pricing Power)")
-            elif margins < 0.10:
-                score -= 4
-                breakdown.append(f"❌ **Gross Margins < 10%:** -4 pts (Low Pricing Power)")
+            if margins >= sc["margins_good_threshold"]:
+                score += sc["margins_good_pts"]
+                breakdown.append(f"✅ **Gross Margins > 50%:** +{sc['margins_good_pts']} pts (High Pricing Power)")
+            elif margins < sc["margins_bad_threshold"]:
+                score += sc["margins_bad_pts"]
+                breakdown.append(f"❌ **Gross Margins < 10%:** {sc['margins_bad_pts']} pts (Low Pricing Power)")
 
         if isinstance(peg, (float, int)):
-            if peg < .9: 
-                score += 5
-                breakdown.append("✅ **PEG < .9:** +5 pts (Undervalued growth)")
-            elif peg > 2.5: 
-                score -= 7; risk_points += 1
-                breakdown.append("❌ **PEG > 2.5:** -7 pts (Overvalued) [+1 Risk]")
-                
+            if peg < sc["peg_good_threshold"]:
+                score += sc["peg_good_pts"]
+                breakdown.append(f"✅ **PEG < .9:** +{sc['peg_good_pts']} pts (Undervalued growth)")
+            elif peg > sc["peg_bad_threshold"]:
+                score += sc["peg_bad_pts"]; risk_points += sc["peg_bad_risk"]
+                breakdown.append(f"❌ **PEG > 2.5:** {sc['peg_bad_pts']} pts (Overvalued) [+{sc['peg_bad_risk']} Risk]")
+
         if isinstance(t_pe, (float, int)) and isinstance(f_pe, (float, int)):
-            if f_pe < t_pe: 
-                score += 5  
-                breakdown.append("✅ **Forward P/E < Trailing:** +5 pts (Earnings expanding)")
-            elif f_pe > (t_pe * 1.2): 
-                score -= 5 
-                breakdown.append("❌ **Forward P/E > Trailing:** -5 pts (Earnings contracting)")
-            if f_pe > 50 or f_pe < 0: 
-                risk_points += 1
-                breakdown.append("⚠️ **Extreme P/E Valuation:** [+1 Risk]")
+            if f_pe < t_pe:
+                score += sc["pe_expand_pts"]
+                breakdown.append(f"✅ **Forward P/E < Trailing:** +{sc['pe_expand_pts']} pts (Earnings expanding)")
+            elif f_pe > (t_pe * sc["pe_contract_multiplier"]):
+                score += sc["pe_contract_pts"]
+                breakdown.append(f"❌ **Forward P/E > Trailing:** {sc['pe_contract_pts']} pts (Earnings contracting)")
+            if f_pe > sc["pe_extreme_threshold"] or f_pe < 0:
+                risk_points += sc["pe_extreme_risk"]
+                breakdown.append(f"⚠️ **Extreme P/E Valuation:** [+{sc['pe_extreme_risk']} Risk]")
         elif t_pe == 'N/A' and f_pe == 'N/A':
-            risk_points += 1 
+            risk_points += 1
             breakdown.append("⚠️ **Missing Earnings Data:** [+1 Risk]")
-            
+
         if isinstance(fcf_yield, (float, int)):
-            if fcf_yield > 6.0: 
-                score += 5
-                breakdown.append("✅ **FCF Yield > 6%:** +5 pts (Strong cash generation)")
-            elif fcf_yield < 0: 
-                score -= 5; risk_points += 1
-                breakdown.append("❌ **Negative FCF Yield:** -5 pts (Cash burn) [+1 Risk]")
-            
+            if fcf_yield > sc["fcf_good_threshold"]:
+                score += sc["fcf_good_pts"]
+                breakdown.append(f"✅ **FCF Yield > 6%:** +{sc['fcf_good_pts']} pts (Strong cash generation)")
+            elif fcf_yield < 0:
+                score += sc["fcf_bad_pts"]; risk_points += sc["fcf_bad_risk"]
+                breakdown.append(f"❌ **Negative FCF Yield:** {sc['fcf_bad_pts']} pts (Cash burn) [+{sc['fcf_bad_risk']} Risk]")
+
         if isinstance(upside, (float, int)):
-            if upside > 25: 
-                score += 10
-                breakdown.append(f"✅ **Analyst Upside > 25%:** +10 pts")
-            elif upside < 0: 
-                score -= 10
-                breakdown.append(f"❌ **Analyst Upside Negative:** -10 pts")
-            
+            if upside > sc["analyst_upside_good_threshold"]:
+                score += sc["analyst_upside_good_pts"]
+                breakdown.append(f"✅ **Analyst Upside > 25%:** +{sc['analyst_upside_good_pts']} pts")
+            elif upside < 0:
+                score += sc["analyst_upside_bad_pts"]
+                breakdown.append(f"❌ **Analyst Upside Negative:** {sc['analyst_upside_bad_pts']} pts")
+
         if isinstance(insiders, (float, int)):
-            if insiders >= 0.15: 
-                score += 10
-                breakdown.append("✅ **Insiders > 15%:** +10 pts (Massive conviction)")
-            elif insiders >= 0.05: 
-                score += 5
-                breakdown.append("✅ **Insiders > 5%:** +5 pts (Strong conviction)")
-            
+            if insiders >= sc["insiders_high_threshold"]:
+                score += sc["insiders_high_pts"]
+                breakdown.append(f"✅ **Insiders > 15%:** +{sc['insiders_high_pts']} pts (Massive conviction)")
+            elif insiders >= sc["insiders_mid_threshold"]:
+                score += sc["insiders_mid_pts"]
+                breakdown.append(f"✅ **Insiders > 5%:** +{sc['insiders_mid_pts']} pts (Strong conviction)")
+
         if isinstance(rsi_14, (float, int)):
-            if rsi_14 < 30: 
-                score += 10
-                breakdown.append("✅ **RSI < 30:** +10 pts (Oversold/Value Zone)")
-            elif rsi_14 > 65: 
-                score -= 10
-                breakdown.append("❌ **RSI > 65:** -10 pts (Overbought/Exhausted)")
-                
+            if rsi_14 < sc["rsi_oversold_threshold"]:
+                score += sc["rsi_oversold_pts"]
+                breakdown.append(f"✅ **RSI < 30:** +{sc['rsi_oversold_pts']} pts (Oversold/Value Zone)")
+            elif rsi_14 > sc["rsi_overbought_threshold"]:
+                score += sc["rsi_overbought_pts"]
+                breakdown.append(f"❌ **RSI > 65:** {sc['rsi_overbought_pts']} pts (Overbought/Exhausted)")
+
         if isinstance(macd_val, (float, int)) and isinstance(sig_val, (float, int)):
-            if macd_val > sig_val: 
-                score += 5
-                breakdown.append("✅ **MACD Bullish Cross:** +5 pts")
-            else: 
-                score -= 5
-                breakdown.append("❌ **MACD Bearish Cross:** -5 pts")
-                
+            if macd_val > sig_val:
+                score += sc["macd_bull_pts"]
+                breakdown.append(f"✅ **MACD Bullish Cross:** +{sc['macd_bull_pts']} pts")
+            else:
+                score += sc["macd_bear_pts"]
+                breakdown.append(f"❌ **MACD Bearish Cross:** {sc['macd_bear_pts']} pts")
+
         if isinstance(bb_upper, (float, int)) and current_price > 0:
-            if current_price < bb_lower: 
-                score += 8
-                breakdown.append("✅ **Price below Lower BB:** +8 pts (Mean reversion bounce)")
-            elif current_price > bb_upper: 
-                score -= 8
-                breakdown.append("❌ **Price above Upper BB:** -8 pts (Overextended)")
-                
-        if vol_surge and (hist['Close'].iloc[-1] > hist['Open'].iloc[-1]): 
-            score += 5 
-            breakdown.append("✅ **Bullish Volume Surge:** +5 pts (Institutional buying)")
-            
+            if current_price < bb_lower:
+                score += sc["bb_below_pts"]
+                breakdown.append(f"✅ **Price below Lower BB:** +{sc['bb_below_pts']} pts (Mean reversion bounce)")
+            elif current_price > bb_upper:
+                score += sc["bb_above_pts"]
+                breakdown.append(f"❌ **Price above Upper BB:** {sc['bb_above_pts']} pts (Overextended)")
+
+        if vol_surge and (hist['Close'].iloc[-1] > hist['Open'].iloc[-1]):
+            score += sc["vol_surge_bull_pts"]
+            breakdown.append(f"✅ **Bullish Volume Surge:** +{sc['vol_surge_bull_pts']} pts (Institutional buying)")
+
         if isinstance(pc_ratio, (float, int)):
-            if pc_ratio < 0.6: 
-                score += 5
-                breakdown.append("✅ **Put/Call < 0.6:** +5 pts (Bullish options flow)")
-            elif pc_ratio > 1.3: 
-                score -= 5
-                breakdown.append("❌ **Put/Call > 1.3:** -5 pts (Bearish options flow)")
-            
-        if volatility > 60: 
-            risk_points += 2
-            breakdown.append("⚠️ **High Volatility (>60%):** [+2 Risk]")
-        elif volatility < 20: 
-            risk_points -= 1
-            breakdown.append("🛡️ **Low Volatility (<20%):** [-1 Risk]")
+            if pc_ratio < sc["pc_bull_threshold"]:
+                score += sc["pc_bull_pts"]
+                breakdown.append(f"✅ **Put/Call < 0.6:** +{sc['pc_bull_pts']} pts (Bullish options flow)")
+            elif pc_ratio > sc["pc_bear_threshold"]:
+                score += sc["pc_bear_pts"]
+                breakdown.append(f"❌ **Put/Call > 1.3:** {sc['pc_bear_pts']} pts (Bearish options flow)")
+
+        if volatility > sc["vol_high_threshold"]:
+            risk_points += sc["vol_high_risk"]
+            breakdown.append(f"⚠️ **High Volatility (>60%):** [+{sc['vol_high_risk']} Risk]")
+        elif volatility < sc["vol_low_threshold"]:
+            risk_points += sc["vol_low_risk"]
+            breakdown.append(f"🛡️ **Low Volatility (<20%):** [{sc['vol_low_risk']} Risk]")
 
         score = max(0, min(100, int(score))) 
         breakdown.append(f"---\n🎯 **Final Quant Score: {score}/100**")
@@ -688,11 +765,14 @@ with tab_main:
     st.markdown("Live scan of a curated universe of global megacap and hyper-growth stocks to find the best (and worst) immediate setups.")
 
     global_universe = [
-        'AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'META', 'TSM', 'AVGO', 'NVO', 'JPM', 
-        'WMT', 'LLY', 'V', 'PG', 'MA', 'JNJ', 'ASML', 'HD', 'ORCL', 'COST', 
-        'CVX', 'BABA', 'CRM', 'AMD', 'BAC', 'PEP', 'LIN', 'KO', 'ADBE', 'DIS', 
-        'CSCO', 'TM', 'INTC', 'VZ', 'PFE', 'NKE', 'SHEL', 'AZN', 'NVS', 'SAP', 
-        'SNY', 'SONY', 'RY', 'PLTR', 'UBER', 'CRWD', 'PANW', 'ARM', 'SMCI', 'ALB', 'NFLX', 'CVS', 'HOOD', 'IBM', 'IREN', 'LRCX', 'AMAT', 'XOM', 'LMT', 'ZETA', 'ACHR', 'UNH', 'NKE', 'COIN', 'NVO', 'ANET', 'CRSP', 'CRWV', 'DIS', 'DUK', 'GLXY', 'LULU', 'NBIS', 'NRG', 'SBUX', 'TSLA'
+        'AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'META', 'TSM', 'AVGO', 'NVO', 'JPM',
+        'WMT', 'LLY', 'V', 'PG', 'MA', 'JNJ', 'ASML', 'HD', 'ORCL', 'COST',
+        'CVX', 'BABA', 'CRM', 'AMD', 'BAC', 'PEP', 'LIN', 'KO', 'ADBE', 'DIS',
+        'CSCO', 'TM', 'INTC', 'VZ', 'PFE', 'NKE', 'SHEL', 'AZN', 'NVS', 'SAP',
+        'SNY', 'SONY', 'RY', 'PLTR', 'UBER', 'CRWD', 'PANW', 'ARM', 'SMCI', 'ALB',
+        'NFLX', 'CVS', 'HOOD', 'IBM', 'IREN', 'LRCX', 'AMAT', 'XOM', 'LMT', 'ZETA',
+        'ACHR', 'UNH', 'COIN', 'ANET', 'CRSP', 'CRWV', 'DUK', 'GLXY', 'LULU', 'NBIS',
+        'NRG', 'SBUX', 'TSLA',
     ]
 
     if st.checkbox("Run Market Scan (Takes ~20 seconds to load)"):
